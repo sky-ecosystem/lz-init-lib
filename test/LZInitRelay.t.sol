@@ -83,7 +83,7 @@ contract LZInitRelayTest is Test {
         requiredDVNs[1] = DVN_NETHERMIND;
 
         vm.startPrank(GOV_OWNER);
-        LZInit.initGovSender(
+        LZInit.initGovOappSender(
             ENDPOINT,
             GOV_SENDER,
             DST_EID,
@@ -131,7 +131,7 @@ contract LZInitRelayTest is Test {
             false
         );
 
-        // Send from L1GovernanceRelay (which is whitelisted by initGovSender)
+        // Send from L1GovernanceRelay (which is whitelisted by initGovOappSender)
         vm.deal(L1_GOV_RELAY, fee.nativeFee);
         vm.prank(L1_GOV_RELAY);
         LZGovBridgeForwarder.sendMessage(

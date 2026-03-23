@@ -129,12 +129,12 @@ contract LZInitTest is Test {
     }
 
     // =====================
-    //  initGovSender tests
+    //  initGovOappSender tests
     // =====================
 
-    function test_initGovSender() public {
+    function test_initGovOappSender() public {
         vm.startPrank(GOV_OWNER);
-        LZInit.initGovSender(
+        LZInit.initGovOappSender(
             ENDPOINT,
             GOV_SENDER,
             DST_EID,
@@ -473,7 +473,7 @@ contract LZInitTest is Test {
         vm.startPrank(GOV_OWNER);
 
         // 1. Wire governance bridge
-        LZInit.initGovSender(
+        LZInit.initGovOappSender(
             ENDPOINT, GOV_SENDER, DST_EID, govOAppReceiver,
             L1_GOV_RELAY, l2GovRelay, SEND_LIB, RECV_LIB,
             execCfg, sendUlnCfg, recvUlnCfg

@@ -74,6 +74,80 @@ library LZInit {
     uint16 internal constant MSG_TYPE_SEND_AND_CALL = 2;
 
     /**
+     * @notice Activate the sUSDS bridge by setting rate limits on a pre-configured OFT adapter.
+     * @dev This function is intended for the first sUSDS deployment scenario where the
+     *      SkyOFTAdapter (sUSDS) on Ethereum has been deployed and fully configured by the
+     *      deployer (peer, send/receive libraries, ULN/executor configs, enforced options)
+     *      and ownership has been transferred to governance. The bridge is "off" because
+     *      rate limits are at zero. This function activates it by setting non-zero rate limits.
+     *
+     *      Sanity checks verify the adapter's pre-configuration before activation:
+     *        - owner and delegate match the expected governance address
+     *        - endpoint matches
+     *        - peer is set correctly for the destination EID
+     *        - token is the expected sUSDS address
+     *        - adapter is not paused
+     *        - rate limits are currently zero (not yet activated)
+     *        - rate limit accounting type matches
+     *
+     * @param oftAdapter         The sUSDS SkyOFTAdapter address on Ethereum.
+     * @param endpoint           The Ethereum EndpointV2 address.
+     * @param dstEid             The destination chain's LZ endpoint ID.
+     * @param expectedPeer       The expected peer (remote SkyOFTAdapterMintBurn) as bytes32.
+     * @param expectedOwner      The expected owner (e.g. MCD_PAUSE_PROXY).
+     * @param expectedToken      The expected sUSDS token address.
+     * @param expectedRlAccountingType The expected rate limit accounting type (0=Net, 1=Gross).
+     * @param inboundWindow      Rate limit window for inbound transfers (seconds).
+     * @param inboundLimit       Rate limit max amount for inbound transfers (wei).
+     * @param outboundWindow     Rate limit window for outbound transfers (seconds).
+     * @param outboundLimit      Rate limit max amount for outbound transfers (wei).
+     */
+    function initSusdsBridge(
+        address oftAdapter,
+        address endpoint,
+        uint32  dstEid,
+        bytes32 expectedPeer,
+        address expectedOwner,
+        address expectedToken,
+        uint8   expectedRlAccountingType,
+        uint48  inboundWindow,
+        uint256 inboundLimit,
+        uint48  outboundWindow,
+        uint256 outboundLimit
+    ) internal {
+        // --- Sanity checks ---
+        OFTAdapterLike oft = OFTAdapterLike(oftAdapter);
+
+        require(oft.owner()          == expectedOwner,  "LZInit/owner-mismatch");
+        require(oft.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
+        require(oft.peers(dstEid)    == expectedPeer,   "LZInit/peer-mismatch");
+        require(!oft.paused(),                           "LZInit/paused");
+        require(oft.token()          == expectedToken,  "LZInit/token-mismatch");
+
+        require(
+            EndpointLike(endpoint).delegates(oftAdapter) == expectedOwner,
+            "LZInit/delegate-mismatch"
+        );
+
+        (,,, uint256 outLimit) = oft.outboundRateLimits(dstEid);
+        (,,, uint256 inLimit)  = oft.inboundRateLimits(dstEid);
+        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
+        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
+
+        require(
+            oft.rateLimitAccountingType() == expectedRlAccountingType,
+            "LZInit/rl-accounting-mismatch"
+        );
+
+        // --- Activate bridge by setting rate limits ---
+        RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
+        RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
+        inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
+        outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
+        oft.setRateLimits(inboundCfg, outboundCfg);
+    }
+
+    /**
      * @notice Wire GovernanceOAppSender to a new remote chain.
      * @dev Performs all Ethereum-side configuration needed for the governance bridge
      *      to reach a new remote chain:
@@ -90,7 +164,7 @@ library LZInit {
      *      strictly required — TBD whether they should be kept or removed.
      *
      * @param endpoint       The Ethereum EndpointV2 address.
-     * @param govSender      The GovernanceOAppSender address.
+     * @param govOappSender      The GovernanceOAppSender address.
      * @param dstEid         The destination chain's LZ endpoint ID.
      * @param govOAppReceiver The GovernanceOAppReceiver address on the remote chain.
      * @param l1GovRelay     The L1GovernanceRelay address on Ethereum.
@@ -101,9 +175,9 @@ library LZInit {
      * @param sendUlnCfg     ULN config for the send direction (Ethereum → Remote).
      * @param recvUlnCfg     ULN config for the receive direction (Remote → Ethereum).
      */
-    function initGovSender(
+    function initGovOappSender(
         address        endpoint,
-        address        govSender,
+        address        govOappSender,
         uint32         dstEid,
         address        govOAppReceiver,
         address        l1GovRelay,
@@ -115,30 +189,30 @@ library LZInit {
         UlnConfig      memory recvUlnCfg
     ) internal {
         // 1. Set peer
-        GovOAppSenderLike(govSender).setPeer(dstEid, _addressToBytes32(govOAppReceiver));
+        GovOAppSenderLike(govOappSender).setPeer(dstEid, _addressToBytes32(govOAppReceiver));
 
         // 2. Set send library
-        EndpointLike(endpoint).setSendLibrary(govSender, dstEid, sendLib);
+        EndpointLike(endpoint).setSendLibrary(govOappSender, dstEid, sendLib);
 
         // 3. Set receive library
         //    NOTE: The GovSender is send-only — TBD whether this is needed.
         //    Included to match the active on-chain configuration.
-        EndpointLike(endpoint).setReceiveLibrary(govSender, dstEid, recvLib, 0);
+        EndpointLike(endpoint).setReceiveLibrary(govOappSender, dstEid, recvLib, 0);
 
         // 4. Set send-direction config (executor + ULN)
         SetConfigParam[] memory sendParams = new SetConfigParam[](2);
         sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
         sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
-        EndpointLike(endpoint).setConfig(govSender, sendLib, sendParams);
+        EndpointLike(endpoint).setConfig(govOappSender, sendLib, sendParams);
 
         // 5. Set receive-direction config (ULN only — no executor on receive side)
         //    NOTE: TBD whether this is needed (see step 3 note).
         SetConfigParam[] memory recvParams = new SetConfigParam[](1);
         recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(recvUlnCfg));
-        EndpointLike(endpoint).setConfig(govSender, recvLib, recvParams);
+        EndpointLike(endpoint).setConfig(govOappSender, recvLib, recvParams);
 
         // 6. Whitelist L1GovernanceRelay → L2GovernanceRelay
-        GovOAppSenderLike(govSender).setCanCallTarget(
+        GovOAppSenderLike(govOappSender).setCanCallTarget(
             l1GovRelay,
             dstEid,
             _addressToBytes32(l2GovRelay),
@@ -231,7 +305,7 @@ library LZInit {
      * @notice Allow a Star subproxy to govern a remote chain via the LZ governance bridge.
      * @dev Whitelists the subproxy to call the LZGovBridgeReceiver on the remote chain
      *      through the GovernanceOAppSender. The GovSender peer for dstEid must already
-     *      be set (via initGovSender or a previous spell).
+     *      be set (via initGovOappSender or a previous spell).
      *
      *      On the remote chain, the LZGovBridgeReceiver is deployed with:
      *        - govOappReceiver = GovernanceOAppReceiver
@@ -239,18 +313,18 @@ library LZInit {
      *        - srcAuthority = starSubproxy (this address)
      *        - target = Executor
      *
-     * @param govSender          The GovernanceOAppSender address on Ethereum.
+     * @param govOappSender          The GovernanceOAppSender address on Ethereum.
      * @param starSubproxy       The Star's subproxy address on Ethereum (e.g. L1_SPARK_PROXY).
      * @param dstEid             The destination chain's LZ endpoint ID.
      * @param lzGovBridgeReceiver The LZGovBridgeReceiver address on the remote chain.
      */
     function whitelistStarGovernance(
-        address govSender,
+        address govOappSender,
         address starSubproxy,
         uint32  dstEid,
         address lzGovBridgeReceiver
     ) internal {
-        GovOAppSenderLike(govSender).setCanCallTarget(
+        GovOAppSenderLike(govOappSender).setCanCallTarget(
             starSubproxy,
             dstEid,
             _addressToBytes32(lzGovBridgeReceiver),
@@ -262,7 +336,7 @@ library LZInit {
      * @notice Allow an SSR oracle forwarder to push savings rate data to a remote chain.
      * @dev Whitelists the SSROracleForwarderLZGovBridge to call the LZGovBridgeReceiver
      *      on the remote chain through the GovernanceOAppSender. The GovSender peer for
-     *      dstEid must already be set (via initGovSender or a previous spell).
+     *      dstEid must already be set (via initGovOappSender or a previous spell).
      *
      *      On the remote chain, the LZGovBridgeReceiver is deployed with:
      *        - govOappReceiver = GovernanceOAppReceiver
@@ -270,97 +344,23 @@ library LZInit {
      *        - srcAuthority = ssrForwarder (this address)
      *        - target = SSRAuthOracle
      *
-     * @param govSender          The GovernanceOAppSender address on Ethereum.
+     * @param govOappSender          The GovernanceOAppSender address on Ethereum.
      * @param ssrForwarder       The SSROracleForwarderLZGovBridge address on Ethereum.
      * @param dstEid             The destination chain's LZ endpoint ID.
      * @param lzGovBridgeReceiver The LZGovBridgeReceiver address on the remote chain.
      */
     function whitelistSSRForwarder(
-        address govSender,
+        address govOappSender,
         address ssrForwarder,
         uint32  dstEid,
         address lzGovBridgeReceiver
     ) internal {
-        GovOAppSenderLike(govSender).setCanCallTarget(
+        GovOAppSenderLike(govOappSender).setCanCallTarget(
             ssrForwarder,
             dstEid,
             _addressToBytes32(lzGovBridgeReceiver),
             true
         );
-    }
-
-    /**
-     * @notice Activate the sUSDS bridge by setting rate limits on a pre-configured OFT adapter.
-     * @dev This function is intended for the first sUSDS deployment scenario where the
-     *      SkyOFTAdapter (sUSDS) on Ethereum has been deployed and fully configured by the
-     *      deployer (peer, send/receive libraries, ULN/executor configs, enforced options)
-     *      and ownership has been transferred to governance. The bridge is "off" because
-     *      rate limits are at zero. This function activates it by setting non-zero rate limits.
-     *
-     *      Sanity checks verify the adapter's pre-configuration before activation:
-     *        - owner and delegate match the expected governance address
-     *        - endpoint matches
-     *        - peer is set correctly for the destination EID
-     *        - token is the expected sUSDS address
-     *        - adapter is not paused
-     *        - rate limits are currently zero (not yet activated)
-     *        - rate limit accounting type matches
-     *
-     * @param oftAdapter         The sUSDS SkyOFTAdapter address on Ethereum.
-     * @param endpoint           The Ethereum EndpointV2 address.
-     * @param dstEid             The destination chain's LZ endpoint ID.
-     * @param expectedPeer       The expected peer (remote SkyOFTAdapterMintBurn) as bytes32.
-     * @param expectedOwner      The expected owner (e.g. MCD_PAUSE_PROXY).
-     * @param expectedToken      The expected sUSDS token address.
-     * @param expectedRlAccountingType The expected rate limit accounting type (0=Net, 1=Gross).
-     * @param inboundWindow      Rate limit window for inbound transfers (seconds).
-     * @param inboundLimit       Rate limit max amount for inbound transfers (wei).
-     * @param outboundWindow     Rate limit window for outbound transfers (seconds).
-     * @param outboundLimit      Rate limit max amount for outbound transfers (wei).
-     */
-    function initSusdsBridge(
-        address oftAdapter,
-        address endpoint,
-        uint32  dstEid,
-        bytes32 expectedPeer,
-        address expectedOwner,
-        address expectedToken,
-        uint8   expectedRlAccountingType,
-        uint48  inboundWindow,
-        uint256 inboundLimit,
-        uint48  outboundWindow,
-        uint256 outboundLimit
-    ) internal {
-        // --- Sanity checks ---
-        OFTAdapterLike oft = OFTAdapterLike(oftAdapter);
-
-        require(oft.owner()          == expectedOwner,  "LZInit/owner-mismatch");
-        require(oft.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
-        require(oft.peers(dstEid)    == expectedPeer,   "LZInit/peer-mismatch");
-        require(!oft.paused(),                           "LZInit/paused");
-        require(oft.token()          == expectedToken,  "LZInit/token-mismatch");
-
-        require(
-            EndpointLike(endpoint).delegates(oftAdapter) == expectedOwner,
-            "LZInit/delegate-mismatch"
-        );
-
-        (,,, uint256 outLimit) = oft.outboundRateLimits(dstEid);
-        (,,, uint256 inLimit)  = oft.inboundRateLimits(dstEid);
-        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
-        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
-
-        require(
-            oft.rateLimitAccountingType() == expectedRlAccountingType,
-            "LZInit/rl-accounting-mismatch"
-        );
-
-        // --- Activate bridge by setting rate limits ---
-        RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
-        RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
-        inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
-        outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
-        oft.setRateLimits(inboundCfg, outboundCfg);
     }
 
     // --- Internal helpers ---
