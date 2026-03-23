@@ -301,6 +301,15 @@ library LZInit {
         OFTAdapterLike(oftAdapter).setEnforcedOptions(opts);
     }
 
+    // TODO: Add logic that performs the L1 relay call (via L1GovernanceRelay / LZGovBridgeForwarder)
+    //       to execute initOFTAdapter on an L2. This would standardize the Ethereum-side spell action
+    //       for L2 routing — i.e., sending a cross-chain governance message that calls initOFTAdapter
+    //       on an existing remote chain to wire it to a new remote chain.
+
+    // TODO: Add a standardized L2 spell contract (or helper) that receives the relayed governance call
+    //       and invokes initOFTAdapter with the appropriate parameters on the L2 side. This ensures
+    //       the L2 spell format is also consistent across deployments.
+
     /**
      * @notice Allow a Star subproxy to govern a remote chain via the LZ governance bridge.
      * @dev Whitelists the subproxy to call the LZGovBridgeReceiver on the remote chain
