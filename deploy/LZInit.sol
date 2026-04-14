@@ -37,6 +37,10 @@ struct EnforcedOptionParam {
 
 /*** Interfaces ***/
 
+interface ChainlogLike {
+    function getAddress(bytes32) external view returns (address);
+}
+
 interface EndpointLike {
     function setSendLibrary(address oapp, uint32 eid, address newLib) external;
     function setReceiveLibrary(address oapp, uint32 eid, address newLib, uint256 gracePeriod) external;
@@ -44,18 +48,56 @@ interface EndpointLike {
     function delegates(address oapp) external view returns (address);
 }
 
-interface GovOAppSenderLike {
+interface OAppLike {
     function setPeer(uint32 eid, bytes32 peer) external;
+    function peers(uint32 eid) external view returns (bytes32);
+}
+
+interface GovOAppSenderLike is OAppLike {
     function setCanCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget, bool canCall) external;
 }
 
-interface OFTAdapterLike {
-    function setPeer(uint32 eid, bytes32 peer) external;
+struct MessagingFee {
+    uint256 nativeFee;
+    uint256 lzTokenFee;
+}
+
+interface L1GovernanceRelayLike {
+    function relayEVM(
+        uint32         dstEid,
+        address        l2GovernanceRelay,
+        address        target,
+        bytes calldata targetData,
+        bytes calldata extraOptions,
+        MessagingFee calldata fee,
+        address        refundAddress
+    ) external payable;
+}
+
+interface L2InitOFTAdapterSpellLike {
+    function execute(
+        address        endpoint,
+        address        oftAdapter,
+        uint32         dstEid,
+        address        remoteMintBurn,
+        address        sendLib,
+        address        recvLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg,
+        UlnConfig      memory recvUlnCfg,
+        uint48         inboundWindow,
+        uint256        inboundLimit,
+        uint48         outboundWindow,
+        uint256        outboundLimit,
+        uint128        optionsGas
+    ) external;
+}
+
+interface OFTAdapterLike is OAppLike {
     function setRateLimits(RateLimitConfig[] calldata inbound, RateLimitConfig[] calldata outbound) external;
     function setEnforcedOptions(EnforcedOptionParam[] calldata opts) external;
     function owner() external view returns (address);
     function endpoint() external view returns (address);
-    function peers(uint32 eid) external view returns (bytes32);
     function token() external view returns (address);
     function paused() external view returns (bool);
     function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
@@ -67,6 +109,8 @@ interface OFTAdapterLike {
 
 library LZInit {
 
+    ChainlogLike internal constant chainlog = ChainlogLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
+
     uint32 internal constant EXECUTOR_CONFIG_TYPE = 1;
     uint32 internal constant ULN_CONFIG_TYPE      = 2;
 
@@ -74,33 +118,9 @@ library LZInit {
     uint16 internal constant MSG_TYPE_SEND_AND_CALL = 2;
 
     /**
-     * @notice Activate the sUSDS bridge by setting rate limits on a pre-configured OFT adapter.
-     * @dev This function is intended for the first sUSDS deployment scenario where the
-     *      SkyOFTAdapter (sUSDS) on Ethereum has been deployed and fully configured by the
-     *      deployer (peer, send/receive libraries, ULN/executor configs, enforced options)
-     *      and ownership has been transferred to governance. The bridge is "off" because
-     *      rate limits are at zero. This function activates it by setting non-zero rate limits.
-     *
-     *      Sanity checks verify the adapter's pre-configuration before activation:
-     *        - owner and delegate match the expected governance address
-     *        - endpoint matches
-     *        - peer is set correctly for the destination EID
-     *        - token is the expected sUSDS address
-     *        - adapter is not paused
-     *        - rate limits are currently zero (not yet activated)
-     *        - rate limit accounting type matches
-     *
-     * @param oftAdapter         The sUSDS SkyOFTAdapter address on Ethereum.
-     * @param endpoint           The Ethereum EndpointV2 address.
-     * @param dstEid             The destination chain's LZ endpoint ID.
-     * @param expectedPeer       The expected peer (remote SkyOFTAdapterMintBurn) as bytes32.
-     * @param expectedOwner      The expected owner (e.g. MCD_PAUSE_PROXY).
-     * @param expectedToken      The expected sUSDS token address.
-     * @param expectedRlAccountingType The expected rate limit accounting type (0=Net, 1=Gross).
-     * @param inboundWindow      Rate limit window for inbound transfers (seconds).
-     * @param inboundLimit       Rate limit max amount for inbound transfers (wei).
-     * @param outboundWindow     Rate limit window for outbound transfers (seconds).
-     * @param outboundLimit      Rate limit max amount for outbound transfers (wei).
+     * @notice Activate a pre-configured sUSDS OFT adapter by setting non-zero rate limits.
+     * @dev    The adapter must be fully configured (peer, libraries, configs, enforced options)
+     *         with rate limits at zero and ownership transferred to governance.
      */
     function initSusdsBridge(
         address oftAdapter,
@@ -147,108 +167,31 @@ library LZInit {
         oft.setRateLimits(inboundCfg, outboundCfg);
     }
 
-    /**
-     * @notice Wire GovernanceOAppSender to a new remote chain.
-     * @dev Performs all Ethereum-side configuration needed for the governance bridge
-     *      to reach a new remote chain:
-     *        1. setPeer
-     *        2. setSendLibrary
-     *        3. setReceiveLibrary   (see note below)
-     *        4. setConfig           (send: executor + ULN)
-     *        5. setConfig           (receive: ULN)  (see note below)
-     *        6. setCanCallTarget    (l1GovRelay → l2GovRelay)
-     *
-     *      NOTE: Steps 3 and 5 (receive library and receive-direction config) are included
-     *      to match the active on-chain GovernanceOAppSender configuration for existing
-     *      destinations. The GovernanceOAppSender is send-only, so these may not be
-     *      strictly required — TBD whether they should be kept or removed.
-     *
-     * @param endpoint       The Ethereum EndpointV2 address.
-     * @param govOappSender      The GovernanceOAppSender address.
-     * @param dstEid         The destination chain's LZ endpoint ID.
-     * @param govOAppReceiver The GovernanceOAppReceiver address on the remote chain.
-     * @param l1GovRelay     The L1GovernanceRelay address on Ethereum.
-     * @param l2GovRelay     The L2GovernanceRelay address on the remote chain.
-     * @param sendLib        The send library (e.g. SendUln302) on Ethereum.
-     * @param recvLib        The receive library (e.g. ReceiveUln302) on Ethereum.
-     * @param execCfg        Executor config for the send direction.
-     * @param sendUlnCfg     ULN config for the send direction (Ethereum → Remote).
-     * @param recvUlnCfg     ULN config for the receive direction (Remote → Ethereum).
-     */
+    /// @notice Wire GovernanceOAppSender to a new remote chain.
     function initGovOappSender(
         address        endpoint,
-        address        govOappSender,
         uint32         dstEid,
         address        govOAppReceiver,
-        address        l1GovRelay,
         address        l2GovRelay,
         address        sendLib,
-        address        recvLib,
         ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg,
-        UlnConfig      memory recvUlnCfg
+        UlnConfig      memory sendUlnCfg
     ) internal {
-        // 1. Set peer
-        GovOAppSenderLike(govOappSender).setPeer(dstEid, _addressToBytes32(govOAppReceiver));
+        address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
-        // 2. Set send library
-        EndpointLike(endpoint).setSendLibrary(govOappSender, dstEid, sendLib);
+        _wireSend(endpoint, govOappSender, dstEid, govOAppReceiver, sendLib, execCfg, sendUlnCfg);
 
-        // 3. Set receive library
-        //    NOTE: The GovSender is send-only — TBD whether this is needed.
-        //    Included to match the active on-chain configuration.
-        EndpointLike(endpoint).setReceiveLibrary(govOappSender, dstEid, recvLib, 0);
-
-        // 4. Set send-direction config (executor + ULN)
-        SetConfigParam[] memory sendParams = new SetConfigParam[](2);
-        sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
-        sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
-        EndpointLike(endpoint).setConfig(govOappSender, sendLib, sendParams);
-
-        // 5. Set receive-direction config (ULN only — no executor on receive side)
-        //    NOTE: TBD whether this is needed (see step 3 note).
-        SetConfigParam[] memory recvParams = new SetConfigParam[](1);
-        recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(recvUlnCfg));
-        EndpointLike(endpoint).setConfig(govOappSender, recvLib, recvParams);
-
-        // 6. Whitelist L1GovernanceRelay → L2GovernanceRelay
         GovOAppSenderLike(govOappSender).setCanCallTarget(
-            l1GovRelay,
+            chainlog.getAddress("LZ_GOV_RELAY"),
             dstEid,
-            _addressToBytes32(l2GovRelay),
+            bytes32(uint256(uint160(l2GovRelay))),
             true
         );
     }
 
     /**
-     * @notice Wire an OFT adapter to a new remote chain.
-     * @dev Performs all configuration needed for bidirectional token bridging:
-     *        1. setPeer
-     *        2. setSendLibrary
-     *        3. setReceiveLibrary
-     *        4. setConfig           (send: executor + ULN)
-     *        5. setConfig           (receive: ULN)
-     *        6. setRateLimits       (inbound + outbound)
-     *        7. setEnforcedOptions  (SEND + SEND_AND_CALL)
-     *
-     *      This function is also used for L2 routing — existing remote chains
-     *      can call it to wire OFT peers to new remote chains (evm-evm only).
-     *
-     * @param endpoint       The EndpointV2 address (Ethereum or L2).
-     * @param oftAdapter     The SkyOFTAdapter or SkyOFTAdapterMintBurn address.
-     * @param dstEid         The destination chain's LZ endpoint ID.
-     * @param remoteMintBurn The peer OFT adapter address on the destination chain.
-     * @param sendLib        The send library (e.g. SendUln302).
-     * @param recvLib        The receive library (e.g. ReceiveUln302).
-     * @param execCfg        Executor config for the send direction.
-     * @param sendUlnCfg     ULN config for the send direction.
-     * @param recvUlnCfg     ULN config for the receive direction (confirmations may differ).
-     * @param inboundWindow  Rate limit window for inbound transfers (seconds).
-     * @param inboundLimit   Rate limit max amount for inbound transfers (wei).
-     * @param outboundWindow Rate limit window for outbound transfers (seconds).
-     * @param outboundLimit  Rate limit max amount for outbound transfers (wei).
-     * @param optionsGas     Gas limit for lzReceive on the destination chain.
-     *                       Applied to both SEND and SEND_AND_CALL message types.
+     * @notice Wire an OFT adapter to a new remote chain (bidirectional token bridging).
+     * @dev    Also usable for L2 routing via relayInitOFTAdapter (wiring L2 OFT peers to new remote chains).
      */
     function initOFTAdapter(
         address        endpoint,
@@ -266,129 +209,122 @@ library LZInit {
         uint256        outboundLimit,
         uint128        optionsGas
     ) internal {
-        // 1. Set peer
-        OFTAdapterLike(oftAdapter).setPeer(dstEid, _addressToBytes32(remoteMintBurn));
+        _wireSend(endpoint, oftAdapter, dstEid, remoteMintBurn, sendLib, execCfg, sendUlnCfg);
 
-        // 2. Set send library
-        EndpointLike(endpoint).setSendLibrary(oftAdapter, dstEid, sendLib);
-
-        // 3. Set receive library (gracePeriod = 0 for new destinations)
         EndpointLike(endpoint).setReceiveLibrary(oftAdapter, dstEid, recvLib, 0);
 
-        // 4. Set send-direction config (executor + ULN)
-        SetConfigParam[] memory sendParams = new SetConfigParam[](2);
-        sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
-        sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
-        EndpointLike(endpoint).setConfig(oftAdapter, sendLib, sendParams);
-
-        // 5. Set receive-direction config (ULN only — confirmations may differ from send)
         SetConfigParam[] memory recvParams = new SetConfigParam[](1);
         recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(recvUlnCfg));
         EndpointLike(endpoint).setConfig(oftAdapter, recvLib, recvParams);
 
-        // 6. Set rate limits (inbound + outbound for this destination)
         RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
         RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
         inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
         outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
         OFTAdapterLike(oftAdapter).setRateLimits(inboundCfg, outboundCfg);
 
-        // 7. Set enforced options for both SEND and SEND_AND_CALL message types
-        bytes memory options = _buildLzReceiveOptions(optionsGas);
+        // Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0)
+        bytes memory options = abi.encodePacked(
+            hex"0003",  // OPTIONS_TYPE_3
+            uint8(1),   // WORKER_ID (executor)
+            uint16(17), // option data length
+            uint8(1),   // OPTION_TYPE_LZRECEIVE
+            optionsGas
+        );
         EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
         opts[0] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND,          options);
         opts[1] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND_AND_CALL, options);
         OFTAdapterLike(oftAdapter).setEnforcedOptions(opts);
     }
 
-    // TODO: Add logic that performs the L1 relay call (via L1GovernanceRelay / LZGovBridgeForwarder)
-    //       to execute initOFTAdapter on an L2. This would standardize the Ethereum-side spell action
-    //       for L2 routing — i.e., sending a cross-chain governance message that calls initOFTAdapter
-    //       on an existing remote chain to wire it to a new remote chain.
-
-    // TODO: Add a standardized L2 spell contract (or helper) that receives the relayed governance call
-    //       and invokes initOFTAdapter with the appropriate parameters on the L2 side. This ensures
-    //       the L2 spell format is also consistent across deployments.
-
     /**
-     * @notice Allow a Star subproxy to govern a remote chain via the LZ governance bridge.
-     * @dev Whitelists the subproxy to call the LZGovBridgeReceiver on the remote chain
-     *      through the GovernanceOAppSender. The GovSender peer for dstEid must already
-     *      be set (via initGovOappSender or a previous spell).
-     *
-     *      On the remote chain, the LZGovBridgeReceiver is deployed with:
-     *        - govOappReceiver = GovernanceOAppReceiver
-     *        - srcEid = 30101 (Ethereum)
-     *        - srcAuthority = starSubproxy (this address)
-     *        - target = Executor
-     *
-     * @param govOappSender          The GovernanceOAppSender address on Ethereum.
-     * @param starSubproxy       The Star's subproxy address on Ethereum (e.g. L1_SPARK_PROXY).
-     * @param dstEid             The destination chain's LZ endpoint ID.
-     * @param lzGovBridgeReceiver The LZGovBridgeReceiver address on the remote chain.
+     * @notice Relay an initOFTAdapter call to an L2 via the LZ governance bridge.
+     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
+     *         L2InitOFTAdapterSpell must be deployed on the destination chain.
      */
-    function whitelistStarGovernance(
-        address govOappSender,
-        address starSubproxy,
-        uint32  dstEid,
-        address lzGovBridgeReceiver
+    function relayInitOFTAdapter(
+        uint32         dstEid,
+        address        l2GovRelay,
+        address        l2Spell,
+        address        l2Endpoint,
+        address        l2OftAdapter,
+        uint32         newDstEid,
+        address        remoteMintBurn,
+        address        sendLib,
+        address        recvLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg,
+        UlnConfig      memory recvUlnCfg,
+        uint48         inboundWindow,
+        uint256        inboundLimit,
+        uint48         outboundWindow,
+        uint256        outboundLimit,
+        uint128        optionsGas,
+        bytes   memory extraOptions,
+        MessagingFee   memory fee,
+        address        refundAddress
     ) internal {
-        GovOAppSenderLike(govOappSender).setCanCallTarget(
-            starSubproxy,
+        bytes memory targetData = abi.encodeCall(
+            L2InitOFTAdapterSpellLike.execute,
+            (
+                l2Endpoint, l2OftAdapter, newDstEid, remoteMintBurn,
+                sendLib, recvLib, execCfg, sendUlnCfg, recvUlnCfg,
+                inboundWindow, inboundLimit, outboundWindow, outboundLimit, optionsGas
+            )
+        );
+
+        L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
             dstEid,
-            _addressToBytes32(lzGovBridgeReceiver),
-            true
+            l2GovRelay,
+            l2Spell,
+            targetData,
+            extraOptions,
+            fee,
+            refundAddress
         );
     }
 
-    /**
-     * @notice Allow an SSR oracle forwarder to push savings rate data to a remote chain.
-     * @dev Whitelists the SSROracleForwarderLZGovBridge to call the LZGovBridgeReceiver
-     *      on the remote chain through the GovernanceOAppSender. The GovSender peer for
-     *      dstEid must already be set (via initGovOappSender or a previous spell).
-     *
-     *      On the remote chain, the LZGovBridgeReceiver is deployed with:
-     *        - govOappReceiver = GovernanceOAppReceiver
-     *        - srcEid = 30101 (Ethereum)
-     *        - srcAuthority = ssrForwarder (this address)
-     *        - target = SSRAuthOracle
-     *
-     * @param govOappSender          The GovernanceOAppSender address on Ethereum.
-     * @param ssrForwarder       The SSROracleForwarderLZGovBridge address on Ethereum.
-     * @param dstEid             The destination chain's LZ endpoint ID.
-     * @param lzGovBridgeReceiver The LZGovBridgeReceiver address on the remote chain.
-     */
-    function whitelistSSRForwarder(
-        address govOappSender,
-        address ssrForwarder,
-        uint32  dstEid,
-        address lzGovBridgeReceiver
+    /// @notice Configure the LZ endpoint for a non-OApp sender (e.g. Star subproxy using LZForwarder).
+    function initLZSender(
+        address        endpoint,
+        address        sender,
+        uint32         dstEid,
+        address        sendLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg
     ) internal {
-        GovOAppSenderLike(govOappSender).setCanCallTarget(
-            ssrForwarder,
-            dstEid,
-            _addressToBytes32(lzGovBridgeReceiver),
-            true
-        );
+        _wireEndpointSend(endpoint, sender, dstEid, sendLib, execCfg, sendUlnCfg);
     }
 
-    // --- Internal helpers ---
+    // --- Private helpers ---
 
-    function _addressToBytes32(address _addr) private pure returns (bytes32) {
-        return bytes32(uint256(uint160(_addr)));
+    function _wireSend(
+        address        endpoint,
+        address        oappSender,
+        uint32         dstEid,
+        address        oappReceiver,
+        address        sendLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg
+    ) private {
+        OAppLike(oappSender).setPeer(dstEid, bytes32(uint256(uint160(oappReceiver))));
+        _wireEndpointSend(endpoint, oappSender, dstEid, sendLib, execCfg, sendUlnCfg);
     }
 
-    /**
-     * @dev Build LZ enforced options bytes for an executor lzReceive option.
-     *      Equivalent to: OptionsBuilder.newOptions().addExecutorLzReceiveOption(_gas, 0)
-     */
-    function _buildLzReceiveOptions(uint128 _gas) private pure returns (bytes memory) {
-        return abi.encodePacked(
-            hex"0003",  // OPTIONS_TYPE_3
-            uint8(1),   // WORKER_ID (executor)
-            uint16(17), // option data length (1 byte optionType + 16 bytes gas)
-            uint8(1),   // OPTION_TYPE_LZRECEIVE
-            _gas        // uint128 gas
-        );
+    function _wireEndpointSend(
+        address        endpoint,
+        address        sender,
+        uint32         dstEid,
+        address        sendLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg
+    ) private {
+        EndpointLike(endpoint).setSendLibrary(sender, dstEid, sendLib);
+
+        SetConfigParam[] memory sendParams = new SetConfigParam[](2);
+        sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
+        sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
+        EndpointLike(endpoint).setConfig(sender, sendLib, sendParams);
     }
+
 }
