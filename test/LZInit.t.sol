@@ -63,9 +63,9 @@ contract LZInitTest is Test {
     uint32 constant DST_EID = 30184; // Base (new remote)
 
     // Fake addresses for new remote contracts
-    address govOAppReceiver;
+    address govPeer;
     address l2GovRelay;
-    address usdsMintBurn;
+    address oftPeer;
 
     // Reusable configs
     ExecutorConfig execCfg;
@@ -84,9 +84,9 @@ contract LZInitTest is Test {
         SUSDS_OFT    = chainlog.getAddress("SUSDS_OFT");
 
         // Set up fake remote addresses
-        govOAppReceiver     = makeAddr("govOAppReceiver");
-        l2GovRelay          = makeAddr("l2GovRelay");
-        usdsMintBurn        = makeAddr("usdsMintBurn");
+        govPeer     = makeAddr("govPeer");
+        l2GovRelay  = makeAddr("l2GovRelay");
+        oftPeer     = makeAddr("oftPeer");
 
         // Build executor config
         execCfg = ExecutorConfig({
@@ -138,15 +138,15 @@ contract LZInitTest is Test {
     }
 
     // =====================
-    //  initGovOappSender
+    //  addGovRoute
     // =====================
 
-    function test_initGovOappSender() public {
+    function test_addGovRoute() public {
         vm.startPrank(PAUSE_PROXY);
-        LZInit.initGovOappSender(
+        LZInit.addGovRoute(
             ENDPOINT,
             DST_EID,
-            govOAppReceiver,
+            govPeer,
             l2GovRelay,
             SEND_LIB,
             execCfg,
@@ -154,7 +154,7 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(GovSenderReadLike(GOV_SENDER).peers(DST_EID), bytes32(uint256(uint160(govOAppReceiver))), "govSender peer");
+        assertEq(GovSenderReadLike(GOV_SENDER).peers(DST_EID), bytes32(uint256(uint160(govPeer))), "govSender peer");
         assertEq(EndpointReadLike(ENDPOINT).getSendLibrary(GOV_SENDER, DST_EID), SEND_LIB, "govSender send lib");
 
         bytes memory rawExecCfg = EndpointReadLike(ENDPOINT).getConfig(GOV_SENDER, SEND_LIB, DST_EID, 1);
@@ -171,10 +171,10 @@ contract LZInitTest is Test {
     }
 
     // ========================
-    //  initOFTAdapter
+    //  addOftRoute
     // ========================
 
-    function test_initOFTAdapter() public {
+    function test_addOftRoute() public {
         uint48  inboundWindow  = 1 days;
         uint256 inboundLimit   = 5_000_000e18;
         uint48  outboundWindow = 1 days;
@@ -182,11 +182,11 @@ contract LZInitTest is Test {
         uint128 optionsGas     = 130_000;
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.initOFTAdapter(
+        LZInit.addOftRoute(
             ENDPOINT,
             USDS_OFT,
             DST_EID,
-            usdsMintBurn,
+            oftPeer,
             SEND_LIB,
             RECV_LIB,
             execCfg,
@@ -200,7 +200,7 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(OFTReadLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(usdsMintBurn))), "oft peer");
+        assertEq(OFTReadLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(oftPeer))), "oft peer");
         assertEq(EndpointReadLike(ENDPOINT).getSendLibrary(USDS_OFT, DST_EID), SEND_LIB, "oft send lib");
 
         (address rl, bool isDefault) = EndpointReadLike(ENDPOINT).getReceiveLibrary(USDS_OFT, DST_EID);
@@ -229,23 +229,23 @@ contract LZInitTest is Test {
     }
 
     // ==================================
-    //  initSusdsBridge
+    //  activateOft
     // ==================================
 
     // External helper for vm.expectRevert (LZInit functions are internal/inlined)
-    function callInitSusdsBridge(
-        address oftAdapter, address endpoint, uint32 dstEid, bytes32 expectedPeer,
+    function callActivateOft(
+        address oft, address endpoint, uint32 dstEid, bytes32 expectedPeer,
         address expectedOwner, address expectedToken, uint8 expectedRlAccountingType,
         uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
     ) external {
-        LZInit.initSusdsBridge(
-            oftAdapter, endpoint, dstEid, expectedPeer,
+        LZInit.activateOft(
+            oft, endpoint, dstEid, expectedPeer,
             expectedOwner, expectedToken, expectedRlAccountingType,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit
         );
     }
 
-    function test_initSusdsBridge() public {
+    function test_activateOft() public {
         uint32  avaxEid = 30106;
         bytes32 peer    = OFTReadLike(SUSDS_OFT).peers(avaxEid);
         address token   = OFTReadLike(SUSDS_OFT).token();
@@ -253,38 +253,38 @@ contract LZInitTest is Test {
         // --- Sanity check reverts ---
 
         vm.expectRevert("LZInit/owner-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, address(0xdead), token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, address(0xdead), token, 0, 1 days, 1e18, 1 days, 1e18);
 
         vm.expectRevert("LZInit/endpoint-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, address(0xdead), avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, address(0xdead), avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
 
         vm.expectRevert("LZInit/peer-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, bytes32(uint256(1)), PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bytes32(uint256(1)), PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
 
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("paused()"), abi.encode(true));
         vm.expectRevert("LZInit/paused");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
         vm.clearMockedCalls();
 
         vm.expectRevert("LZInit/token-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, address(0xdead), 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, address(0xdead), 0, 1 days, 1e18, 1 days, 1e18);
 
         vm.mockCall(ENDPOINT, abi.encodeWithSignature("delegates(address)", SUSDS_OFT), abi.encode(address(0xdead)));
         vm.expectRevert("LZInit/delegate-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
         vm.clearMockedCalls();
 
         vm.expectRevert("LZInit/rl-accounting-mismatch");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 99, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 99, 1 days, 1e18, 1 days, 1e18);
 
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("outboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
         vm.expectRevert("LZInit/outbound-rl-nonzero");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
         vm.clearMockedCalls();
 
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("inboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
         vm.expectRevert("LZInit/inbound-rl-nonzero");
-        this.callInitSusdsBridge(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
         vm.clearMockedCalls();
 
         // --- Happy path ---
@@ -295,7 +295,7 @@ contract LZInitTest is Test {
         uint256 outboundLimit  = 2_000_000e18;
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.initSusdsBridge(
+        LZInit.activateOft(
             SUSDS_OFT, ENDPOINT, avaxEid, peer,
             PAUSE_PROXY, token, 0,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit

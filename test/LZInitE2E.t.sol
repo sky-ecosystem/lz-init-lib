@@ -81,11 +81,11 @@ contract LZInitE2ETest is Test {
 
         // Deploy mocks on Base
         base.selectFork();
-        GovernanceOAppReceiverMock govOAppReceiver = new GovernanceOAppReceiverMock(
+        GovernanceOAppReceiverMock peer = new GovernanceOAppReceiverMock(
             SRC_EID, bytes32(uint256(uint160(GOV_SENDER))), ETH_ENDPOINT, address(this)
         );
         L2GovernanceRelayMock l2GovRelay = new L2GovernanceRelayMock(
-            SRC_EID, address(govOAppReceiver), L1_GOV_RELAY
+            SRC_EID, address(peer), L1_GOV_RELAY
         );
         TestTarget testTarget = new TestTarget();
         TestSpell  testSpell  = new TestSpell();
@@ -103,9 +103,9 @@ contract LZInitE2ETest is Test {
         govOptionalDVNs[6] = DVN_NETHERMIND;
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.initGovOappSender(
+        LZInit.addGovRoute(
             ETH_ENDPOINT, BASE_EID,
-            address(govOAppReceiver), address(l2GovRelay),
+            address(peer), address(l2GovRelay),
             SEND_LIB,
             ExecutorConfig({ maxMessageSize: 10000, executor: EXECUTOR }),
             UlnConfig({
@@ -135,7 +135,7 @@ contract LZInitE2ETest is Test {
         vm.prank(L1_GOV_RELAY);
         IGovOAppSender(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
 
-        bridge.relayMessagesToDestination(true, GOV_SENDER, address(govOAppReceiver));
+        bridge.relayMessagesToDestination(true, GOV_SENDER, address(peer));
         assertEq(testTarget.value(), 42);
     }
 

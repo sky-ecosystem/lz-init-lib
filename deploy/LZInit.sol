@@ -74,22 +74,22 @@ interface L1GovernanceRelayLike {
     ) external payable;
 }
 
-interface L2InitOFTAdapterSpellLike {
-    function execute(
-        address        endpoint,
-        address        oftAdapter,
-        uint32         dstEid,
-        address        remoteMintBurn,
-        address        sendLib,
-        address        recvLib,
-        ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg,
-        UlnConfig      memory recvUlnCfg,
-        uint48         inboundWindow,
-        uint256        inboundLimit,
-        uint48         outboundWindow,
-        uint256        outboundLimit,
-        uint128        optionsGas
+interface LZL2SpellLike {
+    function addOftRoute(
+        address endpoint, address oft, uint32 dstEid, address peer,
+        address sendLib, address recvLib, ExecutorConfig memory execCfg,
+        UlnConfig memory sendUlnCfg, UlnConfig memory recvUlnCfg,
+        uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit,
+        uint128 optionsGas
+    ) external;
+    function activateOft(
+        address oft, address endpoint, uint32 dstEid, bytes32 expectedPeer,
+        address expectedOwner, address expectedToken, uint8 expectedRlAccountingType,
+        uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
+    ) external;
+    function updateRateLimits(
+        address oft, uint32 dstEid,
+        uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
     ) external;
 }
 
@@ -117,13 +117,85 @@ library LZInit {
     uint16 internal constant MSG_TYPE_SEND          = 1;
     uint16 internal constant MSG_TYPE_SEND_AND_CALL = 2;
 
+    // ==================================
+    //  L1 functions
+    // ==================================
+
+    /// @notice Add a governance route from GovernanceOAppSender to a new remote chain.
+    function addGovRoute(
+        address        endpoint,
+        uint32         dstEid,
+        address        peer,
+        address        l2GovRelay,
+        address        sendLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg
+    ) internal {
+        address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
+
+        _wireSend(endpoint, govOappSender, dstEid, peer, sendLib, execCfg, sendUlnCfg);
+
+        GovOAppSenderLike(govOappSender).setCanCallTarget(
+            chainlog.getAddress("LZ_GOV_RELAY"),
+            dstEid,
+            bytes32(uint256(uint160(l2GovRelay))),
+            true
+        );
+    }
+
     /**
-     * @notice Activate a pre-configured sUSDS OFT adapter by setting non-zero rate limits.
-     * @dev    The adapter must be fully configured (peer, libraries, configs, enforced options)
-     *         with rate limits at zero and ownership transferred to governance.
+     * @notice Add a new OFT route from the chain this function runs on to a remote chain.
+     * @dev    Also usable on L2 via relayAddOftRoute.
      */
-    function initSusdsBridge(
-        address oftAdapter,
+    function addOftRoute(
+        address        endpoint,
+        address        oft,
+        uint32         dstEid,
+        address        peer,
+        address        sendLib,
+        address        recvLib,
+        ExecutorConfig memory execCfg,
+        UlnConfig      memory sendUlnCfg,
+        UlnConfig      memory recvUlnCfg,
+        uint48         inboundWindow,
+        uint256        inboundLimit,
+        uint48         outboundWindow,
+        uint256        outboundLimit,
+        uint128        optionsGas
+    ) internal {
+        _wireSend(endpoint, oft, dstEid, peer, sendLib, execCfg, sendUlnCfg);
+
+        EndpointLike(endpoint).setReceiveLibrary(oft, dstEid, recvLib, 0);
+
+        SetConfigParam[] memory recvParams = new SetConfigParam[](1);
+        recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(recvUlnCfg));
+        EndpointLike(endpoint).setConfig(oft, recvLib, recvParams);
+
+        // Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0)
+        bytes memory options = abi.encodePacked(
+            hex"0003",  // OPTIONS_TYPE_3
+            uint8(1),   // WORKER_ID (executor)
+            uint16(17), // option data length
+            uint8(1),   // OPTION_TYPE_LZRECEIVE
+            optionsGas
+        );
+        EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
+        opts[0] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND,          options);
+        opts[1] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND_AND_CALL, options);
+        OFTAdapterLike(oft).setEnforcedOptions(opts);
+
+        updateRateLimits(oft, dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+    }
+
+    /**
+     * @notice Activate a pre-configured OFT adapter by setting non-zero rate limits.
+     * @dev    Use this when the adapter was already configured by the deployer (peer, libraries,
+     *         configs, enforced options) with rate limits at zero and ownership transferred to
+     *         governance. Sanity checks verify the pre-configuration before activation (enforced options must be verified off-chain).
+     *         Also usable on L2 via relayActivateOft.
+     */
+    function activateOft(
+        address oft,
         address endpoint,
         uint32  dstEid,
         bytes32 expectedPeer,
@@ -135,8 +207,7 @@ library LZInit {
         uint48  outboundWindow,
         uint256 outboundLimit
     ) internal {
-        // --- Sanity checks ---
-        OFTAdapterLike oft = OFTAdapterLike(oftAdapter);
+        OFTAdapterLike oft = OFTAdapterLike(oft);
 
         require(oft.owner()          == expectedOwner,  "LZInit/owner-mismatch");
         require(oft.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
@@ -145,7 +216,7 @@ library LZInit {
         require(oft.token()          == expectedToken,  "LZInit/token-mismatch");
 
         require(
-            EndpointLike(endpoint).delegates(oftAdapter) == expectedOwner,
+            EndpointLike(endpoint).delegates(address(oft)) == expectedOwner,
             "LZInit/delegate-mismatch"
         );
 
@@ -159,45 +230,45 @@ library LZInit {
             "LZInit/rl-accounting-mismatch"
         );
 
-        // --- Activate bridge by setting rate limits ---
+        updateRateLimits(address(oft), dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+    }
+
+    /// @notice Update rate limits on an OFT adapter for a given destination.
+    function updateRateLimits(
+        address oft,
+        uint32  dstEid,
+        uint48  inboundWindow,
+        uint256 inboundLimit,
+        uint48  outboundWindow,
+        uint256 outboundLimit
+    ) internal {
         RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
         RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
         inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
         outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
-        oft.setRateLimits(inboundCfg, outboundCfg);
+        OFTAdapterLike(oft).setRateLimits(inboundCfg, outboundCfg);
     }
 
-    /// @notice Wire GovernanceOAppSender to a new remote chain.
-    function initGovOappSender(
-        address        endpoint,
-        uint32         dstEid,
-        address        govOAppReceiver,
-        address        l2GovRelay,
-        address        sendLib,
-        ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg
-    ) internal {
-        address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
-
-        _wireSend(endpoint, govOappSender, dstEid, govOAppReceiver, sendLib, execCfg, sendUlnCfg);
-
-        GovOAppSenderLike(govOappSender).setCanCallTarget(
-            chainlog.getAddress("LZ_GOV_RELAY"),
-            dstEid,
-            bytes32(uint256(uint160(l2GovRelay))),
-            true
-        );
-    }
+    // ==================================
+    //  Relay functions (L1 → L2)
+    // ==================================
 
     /**
-     * @notice Wire an OFT adapter to a new remote chain (bidirectional token bridging).
-     * @dev    Also usable for L2 routing via relayInitOFTAdapter (wiring L2 OFT peers to new remote chains).
+     * @notice Relay an addOftRoute call to an L2 via the LZ governance bridge.
+     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
+     *         LZL2Spell must be deployed on the destination chain.
      */
-    function initOFTAdapter(
-        address        endpoint,
-        address        oftAdapter,
+    function relayAddOftRoute(
         uint32         dstEid,
-        address        remoteMintBurn,
+        address        l2GovRelay,
+        address        l2Spell,
+        bytes   memory extraOptions,
+        MessagingFee   memory fee,
+        address        refundAddress,
+        address        l2Endpoint,
+        address        l2Oft,
+        uint32         newDstEid,
+        address        peer,
         address        sendLib,
         address        recvLib,
         ExecutorConfig memory execCfg,
@@ -209,80 +280,90 @@ library LZInit {
         uint256        outboundLimit,
         uint128        optionsGas
     ) internal {
-        _wireSend(endpoint, oftAdapter, dstEid, remoteMintBurn, sendLib, execCfg, sendUlnCfg);
-
-        EndpointLike(endpoint).setReceiveLibrary(oftAdapter, dstEid, recvLib, 0);
-
-        SetConfigParam[] memory recvParams = new SetConfigParam[](1);
-        recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(recvUlnCfg));
-        EndpointLike(endpoint).setConfig(oftAdapter, recvLib, recvParams);
-
-        RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
-        RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
-        inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
-        outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
-        OFTAdapterLike(oftAdapter).setRateLimits(inboundCfg, outboundCfg);
-
-        // Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0)
-        bytes memory options = abi.encodePacked(
-            hex"0003",  // OPTIONS_TYPE_3
-            uint8(1),   // WORKER_ID (executor)
-            uint16(17), // option data length
-            uint8(1),   // OPTION_TYPE_LZRECEIVE
-            optionsGas
-        );
-        EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
-        opts[0] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND,          options);
-        opts[1] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND_AND_CALL, options);
-        OFTAdapterLike(oftAdapter).setEnforcedOptions(opts);
-    }
-
-    /**
-     * @notice Relay an initOFTAdapter call to an L2 via the LZ governance bridge.
-     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
-     *         L2InitOFTAdapterSpell must be deployed on the destination chain.
-     */
-    function relayInitOFTAdapter(
-        uint32         dstEid,
-        address        l2GovRelay,
-        address        l2Spell,
-        address        l2Endpoint,
-        address        l2OftAdapter,
-        uint32         newDstEid,
-        address        remoteMintBurn,
-        address        sendLib,
-        address        recvLib,
-        ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg,
-        UlnConfig      memory recvUlnCfg,
-        uint48         inboundWindow,
-        uint256        inboundLimit,
-        uint48         outboundWindow,
-        uint256        outboundLimit,
-        uint128        optionsGas,
-        bytes   memory extraOptions,
-        MessagingFee   memory fee,
-        address        refundAddress
-    ) internal {
         bytes memory targetData = abi.encodeCall(
-            L2InitOFTAdapterSpellLike.execute,
+            LZL2SpellLike.addOftRoute,
             (
-                l2Endpoint, l2OftAdapter, newDstEid, remoteMintBurn,
+                l2Endpoint, l2Oft, newDstEid, peer,
                 sendLib, recvLib, execCfg, sendUlnCfg, recvUlnCfg,
                 inboundWindow, inboundLimit, outboundWindow, outboundLimit, optionsGas
             )
         );
 
         L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
-            dstEid,
-            l2GovRelay,
-            l2Spell,
-            targetData,
-            extraOptions,
-            fee,
-            refundAddress
+            dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
         );
     }
+
+    /**
+     * @notice Relay an activateOft call to an L2 via the LZ governance bridge.
+     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
+     *         LZL2Spell must be deployed on the destination chain.
+     */
+    function relayActivateOft(
+        uint32         dstEid,
+        address        l2GovRelay,
+        address        l2Spell,
+        bytes   memory extraOptions,
+        MessagingFee   memory fee,
+        address        refundAddress,
+        address        l2Oft,
+        address        l2Endpoint,
+        uint32         targetDstEid,
+        bytes32        expectedPeer,
+        address        expectedOwner,
+        address        expectedToken,
+        uint8          expectedRlAccountingType,
+        uint48         inboundWindow,
+        uint256        inboundLimit,
+        uint48         outboundWindow,
+        uint256        outboundLimit
+    ) internal {
+        bytes memory targetData = abi.encodeCall(
+            LZL2SpellLike.activateOft,
+            (
+                l2Oft, l2Endpoint, targetDstEid, expectedPeer,
+                expectedOwner, expectedToken, expectedRlAccountingType,
+                inboundWindow, inboundLimit, outboundWindow, outboundLimit
+            )
+        );
+
+        L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
+            dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
+        );
+    }
+
+    /**
+     * @notice Relay an updateRateLimits call to an L2 via the LZ governance bridge.
+     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
+     *         LZL2Spell must be deployed on the destination chain.
+     */
+    function relayUpdateRateLimits(
+        uint32         dstEid,
+        address        l2GovRelay,
+        address        l2Spell,
+        bytes   memory extraOptions,
+        MessagingFee   memory fee,
+        address        refundAddress,
+        address        l2Oft,
+        uint32         targetDstEid,
+        uint48         inboundWindow,
+        uint256        inboundLimit,
+        uint48         outboundWindow,
+        uint256        outboundLimit
+    ) internal {
+        bytes memory targetData = abi.encodeCall(
+            LZL2SpellLike.updateRateLimits,
+            (l2Oft, targetDstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit)
+        );
+
+        L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
+            dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
+        );
+    }
+
+    // ==================================
+    //  Star subproxy functions
+    // ==================================
 
     /// @notice Configure the LZ endpoint for a non-OApp sender (e.g. Star subproxy using LZForwarder).
     function initLZSender(

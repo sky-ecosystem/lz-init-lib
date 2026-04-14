@@ -1,25 +1,31 @@
 # LZ Init Library
 
-Reusable Solidity library for LayerZero configuration actions in Sky/Maker governance spells. Imported by Ethereum spells to standardize and de-duplicate the wiring of new remote chain SkyLink deployments.
+Reusable Solidity library for LayerZero configuration in Sky governance spells. Standardizes the wiring and management of SkyLink deployments across chains.
 
-## Functions
+## Library Functions (`LZInit.sol`)
 
-- `initSusdsBridge` — Activate a pre-configured sUSDS OFT adapter by setting rate limits. For the first sUSDS deployment where the adapter has been deployed and fully configured by the deployer (peer, libraries, configs, enforced options) but rate limits are at zero. Includes sanity checks (owner, delegate, peer, token, paused state, rate limits at zero, accounting type).
-- `initGovOappSender` — Wire GovernanceOAppSender to a new remote chain (setPeer, send/receive libraries, ULN/executor configs, setCanCallTarget for L1GovernanceRelay)
-- `initOFTAdapter` — Wire an OFT adapter (USDS or sUSDS) to a new remote chain (setPeer, send/receive libraries, ULN/executor configs, rate limits, enforced options). Also used for L2 routing (existing remote → new remote).
-- `whitelistStarGovernance` — Allow a Star subproxy (e.g. Spark) to govern a remote chain via the LZ governance bridge
-- `whitelistSSRForwarder` — Allow the SSR oracle forwarder to push savings rate data to a remote chain
+### L1 Functions
 
-## TBDs
+- **`addGovRoute`** — Add a governance route from LZ_GOV_SENDER to a new remote chain. Sets the peer, send library, DVN/executor config, and whitelists the L1GovernanceRelay via setCanCallTarget.
+- **`addOftRoute`** — Add a new OFT route from the chain this function runs on to a remote chain. Sets the peer, send/receive libraries, DVN/executor configs, enforced options, and rate limits. Also usable on L2 via `relayAddOftRoute`.
+- **`activateOft`** — Activate a pre-configured OFT adapter by setting non-zero rate limits. For adapters already configured by the deployer with rate limits at zero. Includes sanity checks (owner, delegate, peer, token, paused, rate limits at zero, accounting type). Also usable on L2 via `relayActivateOft`.
+- **`updateRateLimits`** — Update rate limits on an OFT adapter for a given destination.
 
-- [ ] `initGovOappSender`: should `setReceiveLibrary` and receive-direction `setConfig` be included? The GovernanceOAppSender is send-only, so a receive library is arguably unnecessary. However, the active on-chain GovSender has both explicitly set for Solana (EID 30168). The Pullup and Dewiz manuals omit them, Sidestream includes them (flagged as "to be confirmed by LayerZero"). Need to decide whether to match the current on-chain config or skip these calls.
-- [x] `initOFTAdapter` sets `enforcedOptions` for both `msgType=1` (SEND) and `msgType=2` (SEND_AND_CALL). Confirmed on-chain: the live USDS_OFT (`0x1e1D...01B8`) has both set for Solana (EID 30168) with identical options (`gas=200000, value=2039280`). The Pullup and Dewiz manuals only show `msgType=1` but the actual deployment uses both.
-- [ ] The live USDS_OFT enforced options include a non-zero `value` parameter (2,039,280 lamports for Solana SPL token account rent). The current `initOFTAdapter` implementation always sets `value=0`, which is correct for EVM destinations but not for Solana. If Solana or other non-EVM destinations need to be supported, the `_buildLzReceiveOptions` helper needs an additional `value` parameter.
-- [ ] Should `initGovOappSender` and `initOFTAdapter` read reference configs on-chain (e.g. `endpoint.getSendLibrary(existingAdapter, refDstEid)`) to derive defaults, or require all params to be passed explicitly? The manuals show both patterns — Pullup/Dewiz read from reference, Sidestream hardcodes values.
-- [ ] Executor `maxMessageSize` varies: Sidestream uses 10,000 for GovSender and 1,000 for OFT on Avalanche. Should this be a parameter or derived from reference?
-- [ ] Should the library handle the one-off sUSDS SkyOFTAdapter deployment on Ethereum (Dewiz Section 6.0 / 7.0), or is that out of scope?
-- [ ] Confirm the exact struct layout for config parameters — should the library define its own config structs or re-export LZ types?
-- [ ] L2 routing: confirm whether L2 spells can import and use the same `initOFTAdapter` function, or if a separate wrapper is needed for the governance relay execution context.
+### Relay Functions (L1 → L2)
+
+Each relay function encodes a call to the corresponding `LZL2Spell` function and sends it via the LZ governance bridge (`L1GovernanceRelay` → `GovOAppSender` → `L2GovernanceRelay`).
+
+- **`relayAddOftRoute`**
+- **`relayActivateOft`**
+- **`relayUpdateRateLimits`**
+
+### Star Subproxy
+
+- **`initLZSender`** — Configure the LZ endpoint for a non-OApp sender (e.g. Star subproxy using LZForwarder).
+
+## L2 Spell (`LZL2Spell.sol`)
+
+Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `addOftRoute`, `activateOft`, and `updateRateLimits` for remote execution via relay.
 
 ## Build
 
@@ -30,5 +36,5 @@ forge build
 ## Test
 
 ```shell
-forge test
+ETH_RPC_URL=<mainnet_rpc> MAINNET_RPC_URL=<mainnet_rpc> forge test
 ```
