@@ -3,7 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
-import { LZInit, UlnConfig, ExecutorConfig, MessagingFee } from "deploy/LZInit.sol";
+import { LZInit, UlnConfig, ExecutorConfig, MessagingFee, OAppLike, OFTAdapterLike } from "deploy/LZInit.sol";
 import { LZL2Spell } from "deploy/LZL2Spell.sol";
 
 import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
@@ -22,29 +22,22 @@ struct TxParams {
     bytes   extraOptions;
 }
 
-interface IGovOAppSender {
+interface GovSenderLike {
     function sendTx(TxParams calldata params, MessagingFee calldata fee, address refundAddress) external payable;
     function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
 }
 
-interface IL2GovernanceRelay {
+interface L2GovernanceRelayLike {
     function relay(address target, bytes calldata targetData) external;
 }
 
-interface EndpointReadLike {
+interface EndpointLike {
     function getSendLibrary(address oapp, uint32 eid) external view returns (address);
     function getReceiveLibrary(address oapp, uint32 eid) external view returns (address lib, bool isDefault);
 }
 
-interface SkyOFTLike {
-    function peers(uint32 eid) external view returns (bytes32);
-    function owner() external view returns (address);
-    function token() external view returns (address);
-    function paused() external view returns (bool);
-    function rateLimitAccountingType() external view returns (uint8);
+interface OAppOptionsLike {
     function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
-    function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
-    function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
 }
 
 /*** Relay tests ***/
@@ -82,10 +75,11 @@ contract LZInitRelayTest is Test {
     function setUp() public {
         // Pinned to the block where SUSDS_OFT was configured for Avalanche, still with 0 rate limits.
         mainnet      = getChain("mainnet").createSelectFork(24871363);
-        GOV_SENDER             = chainlog.getAddress("LZ_GOV_SENDER");
-        L1_GOV_RELAY           = chainlog.getAddress("LZ_GOV_RELAY");
-        AVAX_GOV_OAPP_RECEIVER = address(uint160(uint256(SkyOFTLike(GOV_SENDER).peers(AVAX_EID))));
-        AVAX_USDS_OFT          = address(uint160(uint256(SkyOFTLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
+        GOV_SENDER   = chainlog.getAddress("LZ_GOV_SENDER");
+        L1_GOV_RELAY = chainlog.getAddress("LZ_GOV_RELAY");
+
+        AVAX_GOV_OAPP_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
+        AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
 
         Domain memory avalanche = getChain("avalanche").createFork();
         bridge = LZBridgeTesting.createLZBridge(mainnet, avalanche);
@@ -102,14 +96,14 @@ contract LZInitRelayTest is Test {
         TxParams memory txParams = TxParams({
             dstEid:       AVAX_EID,
             dstTarget:    bytes32(uint256(uint160(AVAX_L2_GOV_RELAY))),
-            dstCallData:  abi.encodeCall(IL2GovernanceRelay.relay, (address(l2Spell), spellCallData)),
+            dstCallData:  abi.encodeCall(L2GovernanceRelayLike.relay, (address(l2Spell), spellCallData)),
             extraOptions: extraOptions
         });
 
-        MessagingFee memory fee = IGovOAppSender(GOV_SENDER).quoteTx(txParams, false);
+        MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(txParams, false);
         vm.deal(L1_GOV_RELAY, fee.nativeFee);
         vm.prank(L1_GOV_RELAY);
-        IGovOAppSender(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
+        GovSenderLike(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
 
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_OAPP_RECEIVER);
     }
@@ -139,31 +133,31 @@ contract LZInitRelayTest is Test {
             )
         ));
 
-        assertEq(SkyOFTLike(AVAX_USDS_OFT).peers(newDstEid), bytes32(uint256(uint160(peer))), "peer");
-        assertEq(EndpointReadLike(AVAX_ENDPOINT).getSendLibrary(AVAX_USDS_OFT, newDstEid), AVAX_SEND_LIB, "send lib");
-        (address rl,) = EndpointReadLike(AVAX_ENDPOINT).getReceiveLibrary(AVAX_USDS_OFT, newDstEid);
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).peers(newDstEid), bytes32(uint256(uint160(peer))), "peer");
+        assertEq(EndpointLike(AVAX_ENDPOINT).getSendLibrary(AVAX_USDS_OFT, newDstEid), AVAX_SEND_LIB, "send lib");
+        (address rl,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(AVAX_USDS_OFT, newDstEid);
         assertEq(rl, AVAX_RECV_LIB, "recv lib");
 
-        (,,, uint256 ibLimit) = SkyOFTLike(AVAX_USDS_OFT).inboundRateLimits(newDstEid);
+        (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(newDstEid);
         assertEq(ibLimit, inboundLimit, "inbound limit");
-        (,,, uint256 obLimit) = SkyOFTLike(AVAX_USDS_OFT).outboundRateLimits(newDstEid);
+        (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(newDstEid);
         assertEq(obLimit, outboundLimit, "outbound limit");
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(SkyOFTLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts, "enforced options SEND");
-        assertEq(SkyOFTLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(OAppOptionsLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts, "enforced options SEND");
+        assertEq(OAppOptionsLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts, "enforced options SEND_AND_CALL");
     }
 
     function test_relayActivateOft() public {
         mainnet.selectFork();
         address ethSusdsOft  = chainlog.getAddress("SUSDS_OFT");
-        address avaxSusdsOft = address(uint160(uint256(SkyOFTLike(ethSusdsOft).peers(AVAX_EID))));
+        address avaxSusdsOft = address(uint160(uint256(OFTAdapterLike(ethSusdsOft).peers(AVAX_EID))));
 
         bridge.destination.selectFork();
-        address expectedOwner = SkyOFTLike(avaxSusdsOft).owner();
-        address expectedToken = SkyOFTLike(avaxSusdsOft).token();
-        bytes32 expectedPeer  = SkyOFTLike(avaxSusdsOft).peers(ETH_EID);
-        uint8   expectedRlAt  = SkyOFTLike(avaxSusdsOft).rateLimitAccountingType();
+        address expectedOwner = OFTAdapterLike(avaxSusdsOft).owner();
+        address expectedToken = OFTAdapterLike(avaxSusdsOft).token();
+        bytes32 expectedPeer  = OFTAdapterLike(avaxSusdsOft).peers(ETH_EID);
+        uint8   expectedRlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
 
         uint48  inboundWindow  = 1 days;
         uint256 inboundLimit   = 2_000_000e18;
@@ -179,9 +173,9 @@ contract LZInitRelayTest is Test {
             )
         ));
 
-        (,,, uint256 ibLimit) = SkyOFTLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
+        (,,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
         assertEq(ibLimit, inboundLimit, "inbound limit");
-        (,,, uint256 obLimit) = SkyOFTLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
+        (,,, uint256 obLimit) = OFTAdapterLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
         assertEq(obLimit, outboundLimit, "outbound limit");
     }
 
@@ -196,9 +190,9 @@ contract LZInitRelayTest is Test {
             (AVAX_USDS_OFT, ETH_EID, newInboundWindow, newInboundLimit, newOutboundWindow, newOutboundLimit)
         ));
 
-        (,,, uint256 ibLimit) = SkyOFTLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
         assertEq(ibLimit, newInboundLimit, "inbound limit");
-        (,,, uint256 obLimit) = SkyOFTLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
         assertEq(obLimit, newOutboundLimit, "outbound limit");
     }
 

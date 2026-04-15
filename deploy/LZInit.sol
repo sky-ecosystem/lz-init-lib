@@ -201,30 +201,8 @@ library LZInit {
         uint48  outboundWindow,
         uint256 outboundLimit
     ) internal {
-        OFTAdapterLike oft_ = OFTAdapterLike(oft);
-
-        require(oft_.owner()          == expectedOwner,  "LZInit/owner-mismatch");
-        require(oft_.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
-        require(oft_.peers(dstEid)    == expectedPeer,   "LZInit/peer-mismatch");
-        require(!oft_.paused(),                           "LZInit/paused");
-        require(oft_.token()          == expectedToken,  "LZInit/token-mismatch");
-
-        require(
-            EndpointLike(endpoint).delegates(address(oft_)) == expectedOwner,
-            "LZInit/delegate-mismatch"
-        );
-
-        (,,, uint256 outLimit) = oft_.outboundRateLimits(dstEid);
-        (,,, uint256 inLimit)  = oft_.inboundRateLimits(dstEid);
-        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
-        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
-
-        require(
-            oft_.rateLimitAccountingType() == expectedRlAccountingType,
-            "LZInit/rl-accounting-mismatch"
-        );
-
-        updateRateLimits(address(oft), dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        _verifyOftConfig(oft, endpoint, dstEid, expectedPeer, expectedOwner, expectedToken, expectedRlAccountingType);
+        updateRateLimits(oft, dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
     }
 
     /// @notice Update rate limits on an OFT adapter for a given destination.
@@ -394,6 +372,39 @@ library LZInit {
         sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
         sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
         EndpointLike(endpoint).setConfig(sender, sendLib, sendParams);
+    }
+
+    function _verifyOftConfig(
+        address oft,
+        address endpoint,
+        uint32  dstEid,
+        bytes32 expectedPeer,
+        address expectedOwner,
+        address expectedToken,
+        uint8   expectedRlAccountingType
+    ) private view {
+        OFTAdapterLike oft_ = OFTAdapterLike(oft);
+
+        require(oft_.owner()       == expectedOwner, "LZInit/owner-mismatch");
+        require(oft_.endpoint()    == endpoint,      "LZInit/endpoint-mismatch");
+        require(oft_.peers(dstEid) == expectedPeer,  "LZInit/peer-mismatch");
+        require(!oft_.paused(),                       "LZInit/paused");
+        require(oft_.token()       == expectedToken, "LZInit/token-mismatch");
+
+        require(
+            EndpointLike(endpoint).delegates(address(oft_)) == expectedOwner,
+            "LZInit/delegate-mismatch"
+        );
+
+        (,,, uint256 outLimit) = oft_.outboundRateLimits(dstEid);
+        (,,, uint256 inLimit)  = oft_.inboundRateLimits(dstEid);
+        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
+        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
+
+        require(
+            oft_.rateLimitAccountingType() == expectedRlAccountingType,
+            "LZInit/rl-accounting-mismatch"
+        );
     }
 
 }

@@ -3,19 +3,19 @@ pragma solidity ^0.8.22;
 
 import { MessageOrigin } from "./GovernanceOAppReceiverMock.sol";
 
-interface IGovernanceOAppReceiver {
+interface GovernanceOAppReceiverLike {
     function messageOrigin() external view returns (MessageOrigin memory);
 }
 
 contract L2GovernanceRelayMock {
 
-    IGovernanceOAppReceiver public l2Oapp;
+    GovernanceOAppReceiverLike public l2Oapp;
     address                 public l1GovernanceRelay;
     uint32 immutable        public l1Eid;
 
     constructor(uint32 _l1Eid, address _l2Oapp, address _l1GovernanceRelay) {
         l1Eid              = _l1Eid;
-        l2Oapp             = IGovernanceOAppReceiver(_l2Oapp);
+        l2Oapp             = GovernanceOAppReceiverLike(_l2Oapp);
         l1GovernanceRelay  = _l1GovernanceRelay;
     }
 

@@ -35,7 +35,7 @@ struct TxParams {
     bytes   extraOptions;
 }
 
-interface IGovOAppSender {
+interface GovSenderLike {
     function sendTx(TxParams calldata params, MessagingFee calldata fee, address refundAddress) external payable;
     function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
 }
@@ -130,10 +130,10 @@ contract LZInitE2ETest is Test {
             extraOptions: extraOptions
         });
 
-        MessagingFee memory fee = IGovOAppSender(GOV_SENDER).quoteTx(txParams, false);
+        MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(txParams, false);
         vm.deal(L1_GOV_RELAY, fee.nativeFee);
         vm.prank(L1_GOV_RELAY);
-        IGovOAppSender(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
+        GovSenderLike(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
 
         bridge.relayMessagesToDestination(true, GOV_SENDER, address(peer));
         assertEq(testTarget.value(), 42);
