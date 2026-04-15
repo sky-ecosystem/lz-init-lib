@@ -121,7 +121,7 @@ library LZInit {
     //  L1 functions
     // ==================================
 
-    /// @notice Add a governance route from GovernanceOAppSender to a new remote chain.
+    /// @notice Add a governance route from LZ_GOV_SENDER to a new remote chain.
     function addGovRoute(
         address        endpoint,
         uint32         dstEid,
@@ -143,10 +143,8 @@ library LZInit {
         );
     }
 
-    /**
-     * @notice Add a new OFT route from the chain this function runs on to a remote chain.
-     * @dev    Also usable on L2 via relayAddOftRoute.
-     */
+    /// @notice Add a new OFT route from the local chain to a remote chain.
+    /// @dev    Also usable on L2 via relayAddOftRoute.
     function addOftRoute(
         address        endpoint,
         address        oft,
@@ -187,13 +185,9 @@ library LZInit {
         updateRateLimits(oft, dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
     }
 
-    /**
-     * @notice Activate a pre-configured OFT adapter by setting non-zero rate limits.
-     * @dev    Use this when the adapter was already configured by the deployer (peer, libraries,
-     *         configs, enforced options) with rate limits at zero and ownership transferred to
-     *         governance. Sanity checks verify the pre-configuration before activation (enforced options must be verified off-chain).
-     *         Also usable on L2 via relayActivateOft.
-     */
+    /// @notice Activate a deployer-configured OFT adapter by setting non-zero rate limits.
+    /// @dev    Sanity checks verify pre-configuration (enforced options must be verified off-chain).
+    ///         Also usable on L2 via relayActivateOft.
     function activateOft(
         address oft,
         address endpoint,
@@ -207,26 +201,26 @@ library LZInit {
         uint48  outboundWindow,
         uint256 outboundLimit
     ) internal {
-        OFTAdapterLike oft = OFTAdapterLike(oft);
+        OFTAdapterLike oft_ = OFTAdapterLike(oft);
 
-        require(oft.owner()          == expectedOwner,  "LZInit/owner-mismatch");
-        require(oft.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
-        require(oft.peers(dstEid)    == expectedPeer,   "LZInit/peer-mismatch");
-        require(!oft.paused(),                           "LZInit/paused");
-        require(oft.token()          == expectedToken,  "LZInit/token-mismatch");
+        require(oft_.owner()          == expectedOwner,  "LZInit/owner-mismatch");
+        require(oft_.endpoint()       == endpoint,       "LZInit/endpoint-mismatch");
+        require(oft_.peers(dstEid)    == expectedPeer,   "LZInit/peer-mismatch");
+        require(!oft_.paused(),                           "LZInit/paused");
+        require(oft_.token()          == expectedToken,  "LZInit/token-mismatch");
 
         require(
-            EndpointLike(endpoint).delegates(address(oft)) == expectedOwner,
+            EndpointLike(endpoint).delegates(address(oft_)) == expectedOwner,
             "LZInit/delegate-mismatch"
         );
 
-        (,,, uint256 outLimit) = oft.outboundRateLimits(dstEid);
-        (,,, uint256 inLimit)  = oft.inboundRateLimits(dstEid);
+        (,,, uint256 outLimit) = oft_.outboundRateLimits(dstEid);
+        (,,, uint256 inLimit)  = oft_.inboundRateLimits(dstEid);
         require(outLimit == 0, "LZInit/outbound-rl-nonzero");
         require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
 
         require(
-            oft.rateLimitAccountingType() == expectedRlAccountingType,
+            oft_.rateLimitAccountingType() == expectedRlAccountingType,
             "LZInit/rl-accounting-mismatch"
         );
 
@@ -253,11 +247,9 @@ library LZInit {
     //  Relay functions (L1 → L2)
     // ==================================
 
-    /**
-     * @notice Relay an addOftRoute call to an L2 via the LZ governance bridge.
-     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
-     *         LZL2Spell must be deployed on the destination chain.
-     */
+    /// @notice Relay an addOftRoute call to an L2 via the LZ governance bridge.
+    /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for (dstEid, l2GovRelay).
+    ///         LZL2Spell must be deployed on the destination chain.
     function relayAddOftRoute(
         uint32         dstEid,
         address        l2GovRelay,
@@ -294,11 +286,9 @@ library LZInit {
         );
     }
 
-    /**
-     * @notice Relay an activateOft call to an L2 via the LZ governance bridge.
-     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
-     *         LZL2Spell must be deployed on the destination chain.
-     */
+    /// @notice Relay an activateOft call to an L2 via the LZ governance bridge.
+    /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for (dstEid, l2GovRelay).
+    ///         LZL2Spell must be deployed on the destination chain.
     function relayActivateOft(
         uint32         dstEid,
         address        l2GovRelay,
@@ -332,11 +322,9 @@ library LZInit {
         );
     }
 
-    /**
-     * @notice Relay an updateRateLimits call to an L2 via the LZ governance bridge.
-     * @dev    L1GovernanceRelay must be whitelisted on GovOAppSender for (dstEid, l2GovRelay).
-     *         LZL2Spell must be deployed on the destination chain.
-     */
+    /// @notice Relay an updateRateLimits call to an L2 via the LZ governance bridge.
+    /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for (dstEid, l2GovRelay).
+    ///         LZL2Spell must be deployed on the destination chain.
     function relayUpdateRateLimits(
         uint32         dstEid,
         address        l2GovRelay,

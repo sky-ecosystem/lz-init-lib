@@ -7,7 +7,7 @@ import { LZInit, UlnConfig, ExecutorConfig, MessagingFee } from "deploy/LZInit.s
 
 import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
 import { Domain, DomainHelpers } from "xchain-helpers/testing/Domain.sol";
-import { LZBridgeTesting }      from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
+import { LZBridgeTesting }       from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
 import { OptionsBuilder }        from "layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 
 import { GovernanceOAppReceiverMock } from "test/mocks/GovernanceOAppReceiverMock.sol";

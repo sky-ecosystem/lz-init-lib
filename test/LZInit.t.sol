@@ -23,7 +23,7 @@ interface GovSenderReadLike {
     function canCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget) external view returns (bool);
 }
 
-interface OFTReadLike {
+interface SkyOFTLike {
     function peers(uint32 eid) external view returns (bytes32);
     function token() external view returns (address);
     function outboundRateLimits(uint32 eid) external view returns (uint128 lastUpdated, uint48 window, uint256 amountInFlight, uint256 limit);
@@ -62,12 +62,10 @@ contract LZInitTest is Test {
 
     uint32 constant DST_EID = 30184; // Base (new remote)
 
-    // Fake addresses for new remote contracts
     address govPeer;
     address l2GovRelay;
     address oftPeer;
 
-    // Reusable configs
     ExecutorConfig execCfg;
     UlnConfig      govUlnCfg;   // 4-of-7 optional for governance OApp
     UlnConfig      oftSendUlnCfg; // 2-of-2 required for OFT send
@@ -83,12 +81,10 @@ contract LZInitTest is Test {
         USDS_OFT     = chainlog.getAddress("USDS_OFT");
         SUSDS_OFT    = chainlog.getAddress("SUSDS_OFT");
 
-        // Set up fake remote addresses
         govPeer     = makeAddr("govPeer");
         l2GovRelay  = makeAddr("l2GovRelay");
         oftPeer     = makeAddr("oftPeer");
 
-        // Build executor config
         execCfg = ExecutorConfig({
             maxMessageSize: 10000,
             executor:       EXECUTOR
@@ -200,7 +196,7 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(OFTReadLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(oftPeer))), "oft peer");
+        assertEq(SkyOFTLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(oftPeer))), "oft peer");
         assertEq(EndpointReadLike(ENDPOINT).getSendLibrary(USDS_OFT, DST_EID), SEND_LIB, "oft send lib");
 
         (address rl, bool isDefault) = EndpointReadLike(ENDPOINT).getReceiveLibrary(USDS_OFT, DST_EID);
@@ -215,17 +211,17 @@ contract LZInitTest is Test {
         _verifyUlnConfig(EndpointReadLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, DST_EID, 2), oftSendUlnCfg, "oft send ULN");
         _verifyUlnConfig(EndpointReadLike(ENDPOINT).getConfig(USDS_OFT, RECV_LIB, DST_EID, 2), oftRecvUlnCfg, "oft recv ULN");
 
-        (, uint48 ibWindow,, uint256 ibLimit) = OFTReadLike(USDS_OFT).inboundRateLimits(DST_EID);
+        (, uint48 ibWindow,, uint256 ibLimit) = SkyOFTLike(USDS_OFT).inboundRateLimits(DST_EID);
         assertEq(ibWindow, inboundWindow, "inbound window");
         assertEq(ibLimit,  inboundLimit,  "inbound limit");
 
-        (, uint48 obWindow,, uint256 obLimit) = OFTReadLike(USDS_OFT).outboundRateLimits(DST_EID);
+        (, uint48 obWindow,, uint256 obLimit) = SkyOFTLike(USDS_OFT).outboundRateLimits(DST_EID);
         assertEq(obWindow, outboundWindow, "outbound window");
         assertEq(obLimit,  outboundLimit,  "outbound limit");
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(OFTReadLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts, "enforced options SEND");
-        assertEq(OFTReadLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(SkyOFTLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts, "enforced options SEND");
+        assertEq(SkyOFTLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts, "enforced options SEND_AND_CALL");
     }
 
     // ==================================
@@ -247,8 +243,8 @@ contract LZInitTest is Test {
 
     function test_activateOft() public {
         uint32  avaxEid = 30106;
-        bytes32 peer    = OFTReadLike(SUSDS_OFT).peers(avaxEid);
-        address token   = OFTReadLike(SUSDS_OFT).token();
+        bytes32 peer    = SkyOFTLike(SUSDS_OFT).peers(avaxEid);
+        address token   = SkyOFTLike(SUSDS_OFT).token();
 
         // --- Sanity check reverts ---
 
@@ -302,11 +298,11 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        (, uint48 ibWindow,, uint256 ibLimit) = OFTReadLike(SUSDS_OFT).inboundRateLimits(avaxEid);
+        (, uint48 ibWindow,, uint256 ibLimit) = SkyOFTLike(SUSDS_OFT).inboundRateLimits(avaxEid);
         assertEq(ibWindow, inboundWindow, "inbound window");
         assertEq(ibLimit,  inboundLimit,  "inbound limit");
 
-        (, uint48 obWindow,, uint256 obLimit) = OFTReadLike(SUSDS_OFT).outboundRateLimits(avaxEid);
+        (, uint48 obWindow,, uint256 obLimit) = SkyOFTLike(SUSDS_OFT).outboundRateLimits(avaxEid);
         assertEq(obWindow, outboundWindow, "outbound window");
         assertEq(obLimit,  outboundLimit,  "outbound limit");
     }
@@ -333,13 +329,13 @@ contract LZInitTest is Test {
         assertEq(
             EndpointReadLike(ENDPOINT).getSendLibrary(SPARK_PROXY, DST_EID),
             SEND_LIB,
-            "lzSender send lib mismatch"
+            "lzSender send lib"
         );
 
         bytes memory rawExecCfg = EndpointReadLike(ENDPOINT).getConfig(SPARK_PROXY, SEND_LIB, DST_EID, 1);
         (uint32 maxMsgSize, address exec) = abi.decode(rawExecCfg, (uint32, address));
-        assertEq(maxMsgSize, 10000, "lzSender executor maxMessageSize mismatch");
-        assertEq(exec, EXECUTOR, "lzSender executor address mismatch");
+        assertEq(maxMsgSize, 10000, "lzSender executor maxMessageSize");
+        assertEq(exec, EXECUTOR, "lzSender executor address");
 
         bytes memory rawSendUln = EndpointReadLike(ENDPOINT).getConfig(SPARK_PROXY, SEND_LIB, DST_EID, 2);
         _verifyUlnConfig(rawSendUln, govUlnCfg, "lzSender send ULN");

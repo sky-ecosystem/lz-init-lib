@@ -4,4 +4,3 @@
 [submodule "lib/xchain-helpers"]
 	path = lib/xchain-helpers
 	url = https://github.com/oldchili/xchain-helpers.git
-	branch = lz-gov-bridge

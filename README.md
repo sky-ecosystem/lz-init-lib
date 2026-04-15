@@ -7,13 +7,13 @@ Reusable Solidity library for LayerZero configuration in Sky governance spells. 
 ### L1 Functions
 
 - **`addGovRoute`** — Add a governance route from LZ_GOV_SENDER to a new remote chain. Sets the peer, send library, DVN/executor config, and whitelists the L1GovernanceRelay via setCanCallTarget.
-- **`addOftRoute`** — Add a new OFT route from the chain this function runs on to a remote chain. Sets the peer, send/receive libraries, DVN/executor configs, enforced options, and rate limits. Also usable on L2 via `relayAddOftRoute`.
-- **`activateOft`** — Activate a pre-configured OFT adapter by setting non-zero rate limits. For adapters already configured by the deployer with rate limits at zero. Includes sanity checks (owner, delegate, peer, token, paused, rate limits at zero, accounting type). Also usable on L2 via `relayActivateOft`.
+- **`addOftRoute`** — Add a new OFT route from the local chain to a remote chain. Sets the peer, send/receive libraries, DVN/executor configs, enforced options, and rate limits. Also usable on L2 via `relayAddOftRoute`.
+- **`activateOft`** — Activate a deployer-configured OFT adapter by setting non-zero rate limits. Includes sanity checks (owner, delegate, peer, token, paused, rate limits at zero, accounting type). Also usable on L2 via `relayActivateOft`.
 - **`updateRateLimits`** — Update rate limits on an OFT adapter for a given destination.
 
 ### Relay Functions (L1 → L2)
 
-Each relay function encodes a call to the corresponding `LZL2Spell` function and sends it via the LZ governance bridge (`L1GovernanceRelay` → `GovOAppSender` → `L2GovernanceRelay`).
+Each relay function encodes a call to the corresponding `LZL2Spell` function and sends it via the LZ governance bridge.
 
 - **`relayAddOftRoute`**
 - **`relayActivateOft`**
@@ -36,5 +36,5 @@ forge build
 ## Test
 
 ```shell
-ETH_RPC_URL=<mainnet_rpc> MAINNET_RPC_URL=<mainnet_rpc> forge test
+MAINNET_RPC_URL=<mainnet_rpc> forge test
 ```
