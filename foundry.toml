@@ -2,7 +2,7 @@
 src = "deploy"
 out = "out"
 libs = ["lib"]
-via_ir = true
+# via_ir = true
 optimizer = false
 optimizer_runs = 200
 
