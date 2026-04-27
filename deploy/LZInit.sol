@@ -35,6 +35,19 @@ struct EnforcedOptionParam {
     bytes  options;
 }
 
+/// @dev DVN arrays in each UlnConfig must be strictly ascending by address.
+struct OftConfig {
+    bytes32   peer;
+    address   owner;
+    address   token;
+    uint8     rlAccountingType;
+    address   sendLib;
+    address   recvLib;
+    UlnConfig sendUlnCfg;
+    UlnConfig recvUlnCfg;
+    uint128   optionsGas;
+}
+
 /*** Interfaces ***/
 
 interface ChainlogLike {
@@ -46,6 +59,9 @@ interface EndpointLike {
     function setReceiveLibrary(address oapp, uint32 eid, address newLib, uint256 gracePeriod) external;
     function setConfig(address oapp, address lib, SetConfigParam[] calldata params) external;
     function delegates(address oapp) external view returns (address);
+    function getSendLibrary(address oapp, uint32 eid) external view returns (address);
+    function getReceiveLibrary(address oapp, uint32 eid) external view returns (address, bool);
+    function getConfig(address oapp, address lib, uint32 eid, uint32 configType) external view returns (bytes memory);
 }
 
 interface OAppLike {
@@ -75,7 +91,7 @@ interface L1GovernanceRelayLike {
 }
 
 interface LZL2SpellLike {
-    function addOftRoute(
+    function wireOftPeer(
         address endpoint, address oft, uint32 dstEid, address peer,
         address sendLib, address recvLib, ExecutorConfig memory execCfg,
         UlnConfig memory sendUlnCfg, UlnConfig memory recvUlnCfg,
@@ -83,8 +99,8 @@ interface LZL2SpellLike {
         uint128 optionsGas
     ) external;
     function activateOft(
-        address oft, address endpoint, uint32 dstEid, bytes32 expectedPeer,
-        address expectedOwner, address expectedToken, uint8 expectedRlAccountingType,
+        address oft, address endpoint, uint32 dstEid,
+        OftConfig memory expected,
         uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
     ) external;
     function updateRateLimits(
@@ -103,6 +119,7 @@ interface OFTAdapterLike is OAppLike {
     function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function rateLimitAccountingType() external view returns (uint8);
+    function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
 }
 
 /*** Library ***/
@@ -143,9 +160,12 @@ library LZInit {
         );
     }
 
-    /// @notice Add a new OFT route from the local chain to a remote chain.
-    /// @dev    Also usable on L2 via relayAddOftRoute.
-    function addOftRoute(
+    /// @notice Connect a local OFT adapter to a new remote peer. In the case
+    ///         of a new remote, the other side will have been configured by
+    ///         a deployer before its ownership is transferred to the
+    ///         L2GovernanceRelay.
+    /// @dev    Also usable on L2 via relayWireOftPeer.
+    function wireOftPeer(
         address        endpoint,
         address        oft,
         uint32         dstEid,
@@ -185,23 +205,22 @@ library LZInit {
         updateRateLimits(oft, dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
     }
 
-    /// @notice Activate a deployer-configured OFT adapter by setting non-zero rate limits.
-    /// @dev    Sanity checks verify pre-configuration (enforced options must be verified off-chain).
-    ///         Also usable on L2 via relayActivateOft.
+    /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1,
+    ///         L2GovernanceRelay on L2) by setting non-zero rate limits.
+    ///         Verifies the on-chain state was configured as expected before
+    ///         flipping the limits on.
+    /// @dev    Also usable on L2 via relayActivateOft.
     function activateOft(
         address oft,
         address endpoint,
         uint32  dstEid,
-        bytes32 expectedPeer,
-        address expectedOwner,
-        address expectedToken,
-        uint8   expectedRlAccountingType,
+        OftConfig memory expected,
         uint48  inboundWindow,
         uint256 inboundLimit,
         uint48  outboundWindow,
         uint256 outboundLimit
     ) internal {
-        _verifyOftConfig(oft, endpoint, dstEid, expectedPeer, expectedOwner, expectedToken, expectedRlAccountingType);
+        _verifyOftConfig(oft, endpoint, dstEid, expected);
         updateRateLimits(oft, dstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
     }
 
@@ -225,10 +244,10 @@ library LZInit {
     //  Relay functions (L1 → L2)
     // ==================================
 
-    /// @notice Relay an addOftRoute call to an L2 via the LZ governance bridge.
+    /// @notice Relay a wireOftPeer call to an L2 via the LZ governance bridge.
     /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for (dstEid, l2GovRelay).
     ///         LZL2Spell must be deployed on the destination chain.
-    function relayAddOftRoute(
+    function relayWireOftPeer(
         uint32         dstEid,
         address        l2GovRelay,
         address        l2Spell,
@@ -251,7 +270,7 @@ library LZInit {
         uint128        optionsGas
     ) internal {
         bytes memory targetData = abi.encodeCall(
-            LZL2SpellLike.addOftRoute,
+            LZL2SpellLike.wireOftPeer,
             (
                 l2Endpoint, l2Oft, newDstEid, peer,
                 sendLib, recvLib, execCfg, sendUlnCfg, recvUlnCfg,
@@ -277,10 +296,7 @@ library LZInit {
         address        l2Oft,
         address        l2Endpoint,
         uint32         targetDstEid,
-        bytes32        expectedPeer,
-        address        expectedOwner,
-        address        expectedToken,
-        uint8          expectedRlAccountingType,
+        OftConfig memory expected,
         uint48         inboundWindow,
         uint256        inboundLimit,
         uint48         outboundWindow,
@@ -289,8 +305,7 @@ library LZInit {
         bytes memory targetData = abi.encodeCall(
             LZL2SpellLike.activateOft,
             (
-                l2Oft, l2Endpoint, targetDstEid, expectedPeer,
-                expectedOwner, expectedToken, expectedRlAccountingType,
+                l2Oft, l2Endpoint, targetDstEid, expected,
                 inboundWindow, inboundLimit, outboundWindow, outboundLimit
             )
         );
@@ -378,22 +393,22 @@ library LZInit {
         address oft,
         address endpoint,
         uint32  dstEid,
-        bytes32 expectedPeer,
-        address expectedOwner,
-        address expectedToken,
-        uint8   expectedRlAccountingType
+        OftConfig memory e
     ) private view {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
 
-        require(oft_.owner()       == expectedOwner, "LZInit/owner-mismatch");
-        require(oft_.endpoint()    == endpoint,      "LZInit/endpoint-mismatch");
-        require(oft_.peers(dstEid) == expectedPeer,  "LZInit/peer-mismatch");
-        require(!oft_.paused(),                       "LZInit/paused");
-        require(oft_.token()       == expectedToken, "LZInit/token-mismatch");
-
+        require(oft_.owner()       == e.owner,  "LZInit/owner-mismatch");
+        require(oft_.endpoint()    == endpoint, "LZInit/endpoint-mismatch");
+        require(oft_.peers(dstEid) == e.peer,   "LZInit/peer-mismatch");
+        require(!oft_.paused(),                 "LZInit/paused");
+        require(oft_.token()       == e.token,  "LZInit/token-mismatch");
         require(
-            EndpointLike(endpoint).delegates(address(oft_)) == expectedOwner,
+            EndpointLike(endpoint).delegates(address(oft_)) == e.owner,
             "LZInit/delegate-mismatch"
+        );
+        require(
+            oft_.rateLimitAccountingType() == e.rlAccountingType,
+            "LZInit/rl-accounting-mismatch"
         );
 
         (,,, uint256 outLimit) = oft_.outboundRateLimits(dstEid);
@@ -401,10 +416,18 @@ library LZInit {
         require(outLimit == 0, "LZInit/outbound-rl-nonzero");
         require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
 
-        require(
-            oft_.rateLimitAccountingType() == expectedRlAccountingType,
-            "LZInit/rl-accounting-mismatch"
-        );
+        require(EndpointLike(endpoint).getSendLibrary(address(oft_), dstEid) == e.sendLib, "LZInit/send-lib-mismatch");
+        (address recvLib,) = EndpointLike(endpoint).getReceiveLibrary(address(oft_), dstEid);
+        require(recvLib == e.recvLib, "LZInit/recv-lib-mismatch");
+
+        bytes memory sendUlnRaw = EndpointLike(endpoint).getConfig(address(oft_), e.sendLib, dstEid, ULN_CONFIG_TYPE);
+        bytes memory recvUlnRaw = EndpointLike(endpoint).getConfig(address(oft_), e.recvLib, dstEid, ULN_CONFIG_TYPE);
+        require(keccak256(sendUlnRaw) == keccak256(abi.encode(e.sendUlnCfg)), "LZInit/send-uln-mismatch");
+        require(keccak256(recvUlnRaw) == keccak256(abi.encode(e.recvUlnCfg)), "LZInit/recv-uln-mismatch");
+
+        bytes memory expectedOptions = abi.encodePacked(hex"0003", uint8(1), uint16(17), uint8(1), e.optionsGas);
+        require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
+        require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND_AND_CALL)) == keccak256(expectedOptions), "LZInit/enforced-send-and-call-mismatch");
     }
 
 }

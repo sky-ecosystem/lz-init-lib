@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.22;
 
-import { LZInit, ExecutorConfig, UlnConfig } from "./LZInit.sol";
+import { LZInit, ExecutorConfig, UlnConfig, OftConfig } from "./LZInit.sol";
 
 /**
  * @title  LZL2Spell
@@ -10,7 +10,7 @@ import { LZInit, ExecutorConfig, UlnConfig } from "./LZInit.sol";
  */
 contract LZL2Spell {
 
-    function addOftRoute(
+    function wireOftPeer(
         address        endpoint,
         address        oft,
         uint32         dstEid,
@@ -26,7 +26,7 @@ contract LZL2Spell {
         uint256        outboundLimit,
         uint128        optionsGas
     ) external {
-        LZInit.addOftRoute(
+        LZInit.wireOftPeer(
             endpoint, oft, dstEid, peer,
             sendLib, recvLib, execCfg, sendUlnCfg, recvUlnCfg,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit, optionsGas
@@ -37,18 +37,14 @@ contract LZL2Spell {
         address oft,
         address endpoint,
         uint32  dstEid,
-        bytes32 expectedPeer,
-        address expectedOwner,
-        address expectedToken,
-        uint8   expectedRlAccountingType,
+        OftConfig memory expected,
         uint48  inboundWindow,
         uint256 inboundLimit,
         uint48  outboundWindow,
         uint256 outboundLimit
     ) external {
         LZInit.activateOft(
-            oft, endpoint, dstEid, expectedPeer,
-            expectedOwner, expectedToken, expectedRlAccountingType,
+            oft, endpoint, dstEid, expected,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit
         );
     }

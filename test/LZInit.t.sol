@@ -4,26 +4,14 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 
 import { OptionsBuilder } from "layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
-import { LZInit, UlnConfig, ExecutorConfig, RateLimitConfig, OFTAdapterLike, OAppLike } from "deploy/LZInit.sol";
+import { LZInit, UlnConfig, ExecutorConfig, OftConfig, EndpointLike, OFTAdapterLike, OAppLike } from "deploy/LZInit.sol";
 
 interface ChainlogReadLike {
     function getAddress(bytes32) external view returns (address);
 }
 
-/*** Read-only interfaces for state verification ***/
-
-interface EndpointLike {
-    function getSendLibrary(address oapp, uint32 eid) external view returns (address);
-    function getReceiveLibrary(address oapp, uint32 eid) external view returns (address lib, bool isDefault);
-    function getConfig(address oapp, address lib, uint32 eid, uint32 configType) external view returns (bytes memory);
-}
-
 interface GovSenderLike {
     function canCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget) external view returns (bool);
-}
-
-interface OAppOptionsLike {
-    function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
 }
 
 /*** Test contract ***/
@@ -162,10 +150,10 @@ contract LZInitTest is Test {
     }
 
     // ========================
-    //  addOftRoute
+    //  wireOftPeer
     // ========================
 
-    function test_addOftRoute() public {
+    function test_wireOftPeer() public {
         uint48  inboundWindow  = 1 days;
         uint256 inboundLimit   = 5_000_000e18;
         uint48  outboundWindow = 1 days;
@@ -173,7 +161,7 @@ contract LZInitTest is Test {
         uint128 optionsGas     = 130_000;
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.addOftRoute(
+        LZInit.wireOftPeer(
             ENDPOINT,
             USDS_OFT,
             DST_EID,
@@ -215,8 +203,8 @@ contract LZInitTest is Test {
         assertEq(obLimit,  outboundLimit,  "outbound limit");
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(OAppOptionsLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts, "enforced options SEND");
-        assertEq(OAppOptionsLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts, "enforced options SEND");
+        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts, "enforced options SEND_AND_CALL");
     }
 
     // ==================================
@@ -225,70 +213,126 @@ contract LZInitTest is Test {
 
     // External helper for vm.expectRevert (LZInit functions are internal/inlined)
     function callActivateOft(
-        address oft, address endpoint, uint32 dstEid, bytes32 expectedPeer,
-        address expectedOwner, address expectedToken, uint8 expectedRlAccountingType,
-        uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
+        address oft,
+        address endpoint,
+        uint32  dstEid,
+        OftConfig memory expected,
+        uint48  inboundWindow,
+        uint256 inboundLimit,
+        uint48  outboundWindow,
+        uint256 outboundLimit
     ) external {
         LZInit.activateOft(
-            oft, endpoint, dstEid, expectedPeer,
-            expectedOwner, expectedToken, expectedRlAccountingType,
+            oft, endpoint, dstEid, expected,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit
         );
     }
 
+    function _loadExpectedConfig(address oft, uint32 dstEid) internal view returns (OftConfig memory e) {
+        OFTAdapterLike oft_ = OFTAdapterLike(oft);
+        e.peer             = oft_.peers(dstEid);
+        e.owner            = oft_.owner();
+        e.token            = oft_.token();
+        e.rlAccountingType = oft_.rateLimitAccountingType();
+        e.sendLib          = EndpointLike(ENDPOINT).getSendLibrary(oft, dstEid);
+        (e.recvLib,)       = EndpointLike(ENDPOINT).getReceiveLibrary(oft, dstEid);
+        bytes memory sendRaw = EndpointLike(ENDPOINT).getConfig(oft, e.sendLib, dstEid, 2);
+        bytes memory recvRaw = EndpointLike(ENDPOINT).getConfig(oft, e.recvLib, dstEid, 2);
+        e.sendUlnCfg = abi.decode(sendRaw, (UlnConfig));
+        e.recvUlnCfg = abi.decode(recvRaw, (UlnConfig));
+        e.optionsGas = 130_000;
+    }
+
     function test_activateOft() public {
         uint32  avaxEid = 30106;
-        bytes32 peer    = OFTAdapterLike(SUSDS_OFT).peers(avaxEid);
-        address token   = OFTAdapterLike(SUSDS_OFT).token();
-
-        // --- Sanity check reverts ---
-
-        vm.expectRevert("LZInit/owner-mismatch");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, address(0xdead), token, 0, 1 days, 1e18, 1 days, 1e18);
-
-        vm.expectRevert("LZInit/endpoint-mismatch");
-        this.callActivateOft(SUSDS_OFT, address(0xdead), avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-
-        vm.expectRevert("LZInit/peer-mismatch");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bytes32(uint256(1)), PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-
-        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("paused()"), abi.encode(true));
-        vm.expectRevert("LZInit/paused");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-        vm.clearMockedCalls();
-
-        vm.expectRevert("LZInit/token-mismatch");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, address(0xdead), 0, 1 days, 1e18, 1 days, 1e18);
-
-        vm.mockCall(ENDPOINT, abi.encodeWithSignature("delegates(address)", SUSDS_OFT), abi.encode(address(0xdead)));
-        vm.expectRevert("LZInit/delegate-mismatch");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-        vm.clearMockedCalls();
-
-        vm.expectRevert("LZInit/rl-accounting-mismatch");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 99, 1 days, 1e18, 1 days, 1e18);
-
-        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("outboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
-        vm.expectRevert("LZInit/outbound-rl-nonzero");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-        vm.clearMockedCalls();
-
-        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("inboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
-        vm.expectRevert("LZInit/inbound-rl-nonzero");
-        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, peer, PAUSE_PROXY, token, 0, 1 days, 1e18, 1 days, 1e18);
-        vm.clearMockedCalls();
-
-        // --- Happy path ---
 
         uint48  inboundWindow  = 1 days;
         uint256 inboundLimit   = 2_000_000e18;
         uint48  outboundWindow = 1 days;
         uint256 outboundLimit  = 2_000_000e18;
 
+        OftConfig memory bad;
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.owner = address(0xdead);
+        vm.expectRevert("LZInit/owner-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        vm.expectRevert("LZInit/endpoint-mismatch");
+        this.callActivateOft(SUSDS_OFT, address(0xdead), avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.peer = bytes32(uint256(1));
+        vm.expectRevert("LZInit/peer-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("paused()"), abi.encode(true));
+        vm.expectRevert("LZInit/paused");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        vm.clearMockedCalls();
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.token = address(0xdead);
+        vm.expectRevert("LZInit/token-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        vm.mockCall(ENDPOINT, abi.encodeWithSignature("delegates(address)", SUSDS_OFT), abi.encode(address(0xdead)));
+        vm.expectRevert("LZInit/delegate-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        vm.clearMockedCalls();
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.rlAccountingType = 99;
+        vm.expectRevert("LZInit/rl-accounting-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("outboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
+        vm.expectRevert("LZInit/outbound-rl-nonzero");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        vm.clearMockedCalls();
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("inboundRateLimits(uint32)", avaxEid), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
+        vm.expectRevert("LZInit/inbound-rl-nonzero");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        vm.clearMockedCalls();
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.sendLib = address(0xdead);
+        vm.expectRevert("LZInit/send-lib-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.recvLib = address(0xdead);
+        vm.expectRevert("LZInit/recv-lib-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.sendUlnCfg.confirmations += 1;
+        vm.expectRevert("LZInit/send-uln-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.recvUlnCfg.confirmations += 1;
+        vm.expectRevert("LZInit/recv-uln-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        bad = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+        bad.optionsGas += 1;
+        vm.expectRevert("LZInit/enforced-send-mismatch");
+        this.callActivateOft(SUSDS_OFT, ENDPOINT, avaxEid, bad, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+
+        // --- Happy path ---
+
+        OftConfig memory expected = _loadExpectedConfig(SUSDS_OFT, avaxEid);
+
         vm.startPrank(PAUSE_PROXY);
         LZInit.activateOft(
-            SUSDS_OFT, ENDPOINT, avaxEid, peer,
-            PAUSE_PROXY, token, 0,
+            SUSDS_OFT, ENDPOINT, avaxEid, expected,
             inboundWindow, inboundLimit, outboundWindow, outboundLimit
         );
         vm.stopPrank();

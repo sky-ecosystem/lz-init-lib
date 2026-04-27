@@ -3,7 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
-import { LZInit, UlnConfig, ExecutorConfig, MessagingFee, OAppLike, OFTAdapterLike } from "deploy/LZInit.sol";
+import { LZInit, UlnConfig, ExecutorConfig, OftConfig, MessagingFee, EndpointLike, OAppLike, OFTAdapterLike } from "deploy/LZInit.sol";
 import { LZL2Spell } from "deploy/LZL2Spell.sol";
 
 import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
@@ -29,15 +29,6 @@ interface GovSenderLike {
 
 interface L2GovernanceRelayLike {
     function relay(address target, bytes calldata targetData) external;
-}
-
-interface EndpointLike {
-    function getSendLibrary(address oapp, uint32 eid) external view returns (address);
-    function getReceiveLibrary(address oapp, uint32 eid) external view returns (address lib, bool isDefault);
-}
-
-interface OAppOptionsLike {
-    function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
 }
 
 /*** Relay tests ***/
@@ -81,7 +72,8 @@ contract LZInitRelayTest is Test {
         AVAX_GOV_OAPP_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
         AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
 
-        Domain memory avalanche = getChain("avalanche").createFork();
+        // Pinned to the block where sUSDS's remote OFT was configured on Avalanche, still with 0 rate limits.
+        Domain memory avalanche = getChain("avalanche").createFork(83293000);
         bridge = LZBridgeTesting.createLZBridge(mainnet, avalanche);
 
         bridge.destination.selectFork();
@@ -108,7 +100,7 @@ contract LZInitRelayTest is Test {
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_OAPP_RECEIVER);
     }
 
-    function test_relayAddOftRoute() public {
+    function test_relayWireOftPeer() public {
         address[] memory avaxDVNs = new address[](2);
         avaxDVNs[0] = AVAX_DVN_LZ_LABS;
         avaxDVNs[1] = AVAX_DVN_NETHERMIND;
@@ -122,7 +114,7 @@ contract LZInitRelayTest is Test {
         uint128 optionsGas     = 130_000;
 
         _relaySpell(abi.encodeCall(
-            LZL2Spell.addOftRoute,
+            LZL2Spell.wireOftPeer,
             (
                 AVAX_ENDPOINT, AVAX_USDS_OFT, newDstEid, peer,
                 AVAX_SEND_LIB, AVAX_RECV_LIB,
@@ -144,8 +136,8 @@ contract LZInitRelayTest is Test {
         assertEq(obLimit, outboundLimit, "outbound limit");
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(OAppOptionsLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts, "enforced options SEND");
-        assertEq(OAppOptionsLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts, "enforced options SEND");
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts, "enforced options SEND_AND_CALL");
     }
 
     function test_relayActivateOft() public {
@@ -154,10 +146,18 @@ contract LZInitRelayTest is Test {
         address avaxSusdsOft = address(uint160(uint256(OFTAdapterLike(ethSusdsOft).peers(AVAX_EID))));
 
         bridge.destination.selectFork();
-        address expectedOwner = OFTAdapterLike(avaxSusdsOft).owner();
-        address expectedToken = OFTAdapterLike(avaxSusdsOft).token();
-        bytes32 expectedPeer  = OFTAdapterLike(avaxSusdsOft).peers(ETH_EID);
-        uint8   expectedRlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
+
+        // Read the full expected config from the Avalanche-side OFT (deployer pre-configured).
+        OftConfig memory expected;
+        expected.peer             = OFTAdapterLike(avaxSusdsOft).peers(ETH_EID);
+        expected.owner            = OFTAdapterLike(avaxSusdsOft).owner();
+        expected.token            = OFTAdapterLike(avaxSusdsOft).token();
+        expected.rlAccountingType = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
+        expected.sendLib          = EndpointLike(AVAX_ENDPOINT).getSendLibrary(avaxSusdsOft, ETH_EID);
+        (expected.recvLib, )      = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(avaxSusdsOft, ETH_EID);
+        expected.sendUlnCfg       = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, expected.sendLib, ETH_EID, 2), (UlnConfig));
+        expected.recvUlnCfg       = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, expected.recvLib, ETH_EID, 2), (UlnConfig));
+        expected.optionsGas       = 130_000;
 
         uint48  inboundWindow  = 1 days;
         uint256 inboundLimit   = 2_000_000e18;
@@ -167,8 +167,7 @@ contract LZInitRelayTest is Test {
         _relaySpell(abi.encodeCall(
             LZL2Spell.activateOft,
             (
-                avaxSusdsOft, AVAX_ENDPOINT, ETH_EID, expectedPeer,
-                expectedOwner, expectedToken, expectedRlAt,
+                avaxSusdsOft, AVAX_ENDPOINT, ETH_EID, expected,
                 inboundWindow, inboundLimit, outboundWindow, outboundLimit
             )
         ));
