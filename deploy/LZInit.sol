@@ -107,11 +107,13 @@ interface LZL2SpellLike {
         address oft, uint32 dstEid,
         uint48 inboundWindow, uint256 inboundLimit, uint48 outboundWindow, uint256 outboundLimit
     ) external;
+    function unpauseOft(address oft) external;
 }
 
 interface OFTAdapterLike is OAppLike {
     function setRateLimits(RateLimitConfig[] calldata inbound, RateLimitConfig[] calldata outbound) external;
     function setEnforcedOptions(EnforcedOptionParam[] calldata opts) external;
+    function unpause() external;
     function owner() external view returns (address);
     function endpoint() external view returns (address);
     function token() external view returns (address);
@@ -228,6 +230,7 @@ library LZInit {
     }
 
     /// @notice Update rate limits on an OFT adapter for a given destination.
+    /// @dev    Also usable on L2 via relayUpdateRateLimits.
     function updateRateLimits(
         address oft,
         uint32  dstEid,
@@ -241,6 +244,12 @@ library LZInit {
         inboundCfg[0]  = RateLimitConfig(dstEid, inboundWindow,  inboundLimit);
         outboundCfg[0] = RateLimitConfig(dstEid, outboundWindow, outboundLimit);
         OFTAdapterLike(oft).setRateLimits(inboundCfg, outboundCfg);
+    }
+
+    /// @notice Unpause an OFT adapter.
+    /// @dev    Also usable on L2 via relayUnpauseOft.
+    function unpauseOft(address oft) internal {
+        OFTAdapterLike(oft).unpause();
     }
 
     // ==================================
@@ -339,6 +348,25 @@ library LZInit {
             LZL2SpellLike.updateRateLimits,
             (l2Oft, targetDstEid, inboundWindow, inboundLimit, outboundWindow, outboundLimit)
         );
+
+        L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
+            dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
+        );
+    }
+
+    /// @notice Relay an unpauseOft call to an L2 via the LZ governance bridge.
+    /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for (dstEid, l2GovRelay).
+    ///         LZL2Spell must be deployed on the destination chain.
+    function relayUnpauseOft(
+        uint32       dstEid,
+        address      l2GovRelay,
+        address      l2Spell,
+        bytes memory extraOptions,
+        MessagingFee memory fee,
+        address      refundAddress,
+        address      l2Oft
+    ) internal {
+        bytes memory targetData = abi.encodeCall(LZL2SpellLike.unpauseOft, (l2Oft));
 
         L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
             dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress

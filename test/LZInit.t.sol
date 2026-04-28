@@ -14,6 +14,11 @@ interface GovSenderLike {
     function canCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget) external view returns (bool);
 }
 
+interface SkyOFTLike {
+    function pause() external;
+    function setPauser(address pauser, bool canPause) external;
+}
+
 /*** Test contract ***/
 
 contract LZInitTest is Test {
@@ -134,20 +139,18 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(OAppLike(GOV_SENDER).peers(DST_EID), bytes32(uint256(uint160(govPeer))), "govSender peer");
-        assertEq(EndpointLike(ENDPOINT).getSendLibrary(GOV_SENDER, DST_EID), SEND_LIB, "govSender send lib");
+        assertEq(OAppLike(GOV_SENDER).peers(DST_EID), bytes32(uint256(uint160(govPeer))));
+        assertEq(EndpointLike(ENDPOINT).getSendLibrary(GOV_SENDER, DST_EID), SEND_LIB);
 
         bytes memory rawExecCfg = EndpointLike(ENDPOINT).getConfig(GOV_SENDER, SEND_LIB, DST_EID, 1);
         (uint32 maxMsgSize, address exec) = abi.decode(rawExecCfg, (uint32, address));
-        assertEq(maxMsgSize, 10000, "govSender executor maxMessageSize");
-        assertEq(exec, EXECUTOR, "govSender executor address");
+        assertEq(maxMsgSize, 10000);
+        assertEq(exec, EXECUTOR);
 
-        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(GOV_SENDER, SEND_LIB, DST_EID, 2), govUlnCfg, "govSender send ULN");
+        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(GOV_SENDER, SEND_LIB, DST_EID, 2), govUlnCfg);
 
         assertTrue(
-            GovSenderLike(GOV_SENDER).canCallTarget(L1_GOV_RELAY, DST_EID, bytes32(uint256(uint160(l2GovRelay)))),
-            "canCallTarget l1GovRelay -> l2GovRelay"
-        );
+            GovSenderLike(GOV_SENDER).canCallTarget(L1_GOV_RELAY, DST_EID, bytes32(uint256(uint160(l2GovRelay)))));
     }
 
     // ==================================
@@ -180,32 +183,32 @@ contract LZInitTest is Test {
         );
         vm.stopPrank();
 
-        assertEq(OFTAdapterLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(oftPeer))), "oft peer");
-        assertEq(EndpointLike(ENDPOINT).getSendLibrary(USDS_OFT, DST_EID), SEND_LIB, "oft send lib");
+        assertEq(OFTAdapterLike(USDS_OFT).peers(DST_EID), bytes32(uint256(uint160(oftPeer))));
+        assertEq(EndpointLike(ENDPOINT).getSendLibrary(USDS_OFT, DST_EID), SEND_LIB);
 
         (address rl, bool isDefault) = EndpointLike(ENDPOINT).getReceiveLibrary(USDS_OFT, DST_EID);
-        assertEq(rl, RECV_LIB, "oft recv lib");
-        assertFalse(isDefault, "oft recv lib should be explicitly set");
+        assertEq(rl, RECV_LIB);
+        assertFalse(isDefault);
 
         bytes memory rawExecCfg = EndpointLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, DST_EID, 1);
         (uint32 maxMsgSize, address exec) = abi.decode(rawExecCfg, (uint32, address));
-        assertEq(maxMsgSize, 10000, "oft executor maxMessageSize");
-        assertEq(exec, EXECUTOR, "oft executor address");
+        assertEq(maxMsgSize, 10000);
+        assertEq(exec, EXECUTOR);
 
-        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, DST_EID, 2), oftSendUlnCfg, "oft send ULN");
-        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(USDS_OFT, RECV_LIB, DST_EID, 2), oftRecvUlnCfg, "oft recv ULN");
+        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, DST_EID, 2), oftSendUlnCfg);
+        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(USDS_OFT, RECV_LIB, DST_EID, 2), oftRecvUlnCfg);
 
         (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(USDS_OFT).inboundRateLimits(DST_EID);
-        assertEq(ibWindow, inboundWindow, "inbound window");
-        assertEq(ibLimit,  inboundLimit,  "inbound limit");
+        assertEq(ibWindow, inboundWindow);
+        assertEq(ibLimit,  inboundLimit);
 
         (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(USDS_OFT).outboundRateLimits(DST_EID);
-        assertEq(obWindow, outboundWindow, "outbound window");
-        assertEq(obLimit,  outboundLimit,  "outbound limit");
+        assertEq(obWindow, outboundWindow);
+        assertEq(obLimit,  outboundLimit);
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts, "enforced options SEND");
-        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 1), expectedOpts);
+        assertEq(OFTAdapterLike(USDS_OFT).enforcedOptions(DST_EID, 2), expectedOpts);
     }
 
     // ==================================
@@ -337,36 +340,75 @@ contract LZInitTest is Test {
         vm.stopPrank();
 
         (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(SUSDS_OFT).inboundRateLimits(AVAX_EID);
-        assertEq(ibWindow, inboundWindow, "inbound window");
-        assertEq(ibLimit,  inboundLimit,  "inbound limit");
+        assertEq(ibWindow, inboundWindow);
+        assertEq(ibLimit,  inboundLimit);
 
         (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(SUSDS_OFT).outboundRateLimits(AVAX_EID);
-        assertEq(obWindow, outboundWindow, "outbound window");
-        assertEq(obLimit,  outboundLimit,  "outbound limit");
+        assertEq(obWindow, outboundWindow);
+        assertEq(obLimit,  outboundLimit);
+    }
+
+    // ==================================
+    //  updateRateLimits
+    // ==================================
+
+    function test_updateRateLimits() public {
+        uint48  inboundWindow  = 1 days;
+        uint256 inboundLimit   = 3_000_000e18;
+        uint48  outboundWindow = 1 days;
+        uint256 outboundLimit  = 3_000_000e18;
+
+        vm.startPrank(PAUSE_PROXY);
+        LZInit.updateRateLimits(SUSDS_OFT, AVAX_EID, inboundWindow, inboundLimit, outboundWindow, outboundLimit);
+        vm.stopPrank();
+
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(SUSDS_OFT).inboundRateLimits(AVAX_EID);
+        assertEq(ibWindow, inboundWindow);
+        assertEq(ibLimit,  inboundLimit);
+
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(SUSDS_OFT).outboundRateLimits(AVAX_EID);
+        assertEq(obWindow, outboundWindow);
+        assertEq(obLimit,  outboundLimit);
+    }
+
+    // ==================================
+    //  unpauseOft
+    // ==================================
+
+    function test_unpauseOft() public {
+        vm.prank(PAUSE_PROXY);
+        SkyOFTLike(USDS_OFT).setPauser(address(this), true);
+        SkyOFTLike(USDS_OFT).pause();
+        assertTrue(OFTAdapterLike(USDS_OFT).paused());
+
+        vm.prank(PAUSE_PROXY);
+        LZInit.unpauseOft(USDS_OFT);
+
+        assertFalse(OFTAdapterLike(USDS_OFT).paused());
     }
 
     // ==================================
     //  Helpers
     // ==================================
 
-    function _verifyUlnConfig(bytes memory rawUln, UlnConfig memory expected, string memory label) internal pure {
+    function _verifyUlnConfig(bytes memory rawUln, UlnConfig memory expected) internal pure {
         UlnConfig memory decoded = abi.decode(rawUln, (UlnConfig));
 
         // NIL_DVN_COUNT (255) resolves to 0 in getConfig
         uint8 expectedRequired = expected.requiredDVNCount == 255 ? 0 : expected.requiredDVNCount;
         uint8 expectedOptional = expected.optionalDVNCount == 255 ? 0 : expected.optionalDVNCount;
 
-        assertEq(decoded.confirmations,        expected.confirmations,        string.concat(label, ": confirmations"));
-        assertEq(decoded.requiredDVNCount,     expectedRequired,              string.concat(label, ": requiredDVNCount"));
-        assertEq(decoded.optionalDVNCount,     expectedOptional,              string.concat(label, ": optionalDVNCount"));
-        assertEq(decoded.optionalDVNThreshold, expected.optionalDVNThreshold, string.concat(label, ": optionalDVNThreshold"));
-        assertEq(decoded.requiredDVNs.length,  expected.requiredDVNs.length,  string.concat(label, ": requiredDVNs length"));
+        assertEq(decoded.confirmations,        expected.confirmations);
+        assertEq(decoded.requiredDVNCount,     expectedRequired);
+        assertEq(decoded.optionalDVNCount,     expectedOptional);
+        assertEq(decoded.optionalDVNThreshold, expected.optionalDVNThreshold);
+        assertEq(decoded.requiredDVNs.length,  expected.requiredDVNs.length);
         for (uint256 i = 0; i < decoded.requiredDVNs.length; i++) {
-            assertEq(decoded.requiredDVNs[i], expected.requiredDVNs[i], string.concat(label, ": requiredDVN"));
+            assertEq(decoded.requiredDVNs[i], expected.requiredDVNs[i]);
         }
-        assertEq(decoded.optionalDVNs.length, expected.optionalDVNs.length, string.concat(label, ": optionalDVNs length"));
+        assertEq(decoded.optionalDVNs.length, expected.optionalDVNs.length);
         for (uint256 i = 0; i < decoded.optionalDVNs.length; i++) {
-            assertEq(decoded.optionalDVNs[i], expected.optionalDVNs[i], string.concat(label, ": optionalDVN"));
+            assertEq(decoded.optionalDVNs[i], expected.optionalDVNs[i]);
         }
     }
 

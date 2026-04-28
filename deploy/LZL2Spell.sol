@@ -63,4 +63,8 @@ contract LZL2Spell {
         );
     }
 
+    function unpauseOft(address oft) external {
+        LZInit.unpauseOft(oft);
+    }
+
 }

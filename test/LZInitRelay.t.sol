@@ -31,6 +31,11 @@ interface L2GovernanceRelayLike {
     function relay(address target, bytes calldata targetData) external;
 }
 
+interface SkyOFTLike {
+    function pause() external;
+    function setPauser(address pauser, bool canPause) external;
+}
+
 /*** Relay tests ***/
 
 contract LZInitRelayTest is Test {
@@ -83,13 +88,11 @@ contract LZInitRelayTest is Test {
     function _relaySpell(bytes memory spellCallData) internal {
         mainnet.selectFork();
 
-        bytes memory extraOptions = OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0);
-
         TxParams memory txParams = TxParams({
             dstEid:       AVAX_EID,
             dstTarget:    bytes32(uint256(uint160(AVAX_L2_GOV_RELAY))),
             dstCallData:  abi.encodeCall(L2GovernanceRelayLike.relay, (address(l2Spell), spellCallData)),
-            extraOptions: extraOptions
+            extraOptions: OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0)
         });
 
         MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(txParams, false);
@@ -125,19 +128,19 @@ contract LZInitRelayTest is Test {
             )
         ));
 
-        assertEq(OFTAdapterLike(AVAX_USDS_OFT).peers(newDstEid), bytes32(uint256(uint160(peer))), "peer");
-        assertEq(EndpointLike(AVAX_ENDPOINT).getSendLibrary(AVAX_USDS_OFT, newDstEid), AVAX_SEND_LIB, "send lib");
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).peers(newDstEid), bytes32(uint256(uint160(peer))));
+        assertEq(EndpointLike(AVAX_ENDPOINT).getSendLibrary(AVAX_USDS_OFT, newDstEid), AVAX_SEND_LIB);
         (address rl,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(AVAX_USDS_OFT, newDstEid);
-        assertEq(rl, AVAX_RECV_LIB, "recv lib");
+        assertEq(rl, AVAX_RECV_LIB);
 
         (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(newDstEid);
-        assertEq(ibLimit, inboundLimit, "inbound limit");
+        assertEq(ibLimit, inboundLimit);
         (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(newDstEid);
-        assertEq(obLimit, outboundLimit, "outbound limit");
+        assertEq(obLimit, outboundLimit);
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0);
-        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts, "enforced options SEND");
-        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts, "enforced options SEND_AND_CALL");
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 1), expectedOpts);
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(newDstEid, 2), expectedOpts);
     }
 
     function test_relayActivateOft() public {
@@ -173,9 +176,9 @@ contract LZInitRelayTest is Test {
         ));
 
         (,,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
-        assertEq(ibLimit, inboundLimit, "inbound limit");
+        assertEq(ibLimit, inboundLimit);
         (,,, uint256 obLimit) = OFTAdapterLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
-        assertEq(obLimit, outboundLimit, "outbound limit");
+        assertEq(obLimit, outboundLimit);
     }
 
     function test_relayUpdateRateLimits() public {
@@ -190,9 +193,22 @@ contract LZInitRelayTest is Test {
         ));
 
         (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
-        assertEq(ibLimit, newInboundLimit, "inbound limit");
+        assertEq(ibLimit, newInboundLimit);
         (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
-        assertEq(obLimit, newOutboundLimit, "outbound limit");
+        assertEq(obLimit, newOutboundLimit);
+    }
+
+    function test_relayUnpauseOft() public {
+        bridge.destination.selectFork();
+        address oftOwner = OFTAdapterLike(AVAX_USDS_OFT).owner();
+        vm.prank(oftOwner);
+        SkyOFTLike(AVAX_USDS_OFT).setPauser(address(this), true);
+        SkyOFTLike(AVAX_USDS_OFT).pause();
+        assertTrue(OFTAdapterLike(AVAX_USDS_OFT).paused());
+
+        _relaySpell(abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT)));
+
+        assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
     }
 
 }
