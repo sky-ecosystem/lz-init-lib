@@ -138,8 +138,11 @@ library LZInit {
     //  L1 functions
     // ==================================
 
-    /// @notice Add a governance route from LZ_GOV_SENDER to a new remote chain.
-    function addGovRoute(
+    /// @notice Connect LZ_GOV_SENDER to a new remote peer and whitelist
+    ///         LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and
+    ///         the L2GovernanceRelay will have been configured by a deployer
+    ///         beforehand.
+    function wireGovPeer(
         address        endpoint,
         uint32         dstEid,
         address        peer,
@@ -161,9 +164,9 @@ library LZInit {
     }
 
     /// @notice Connect a local OFT adapter to a new remote peer. In the case
-    ///         of a new remote, the other side will have been configured by
-    ///         a deployer before its ownership is transferred to the
-    ///         L2GovernanceRelay.
+    ///         of a new remote, the remote OFT adapter will have been
+    ///         configured by a deployer before its ownership is transferred
+    ///         to the L2GovernanceRelay.
     /// @dev    Also usable on L2 via relayWireOftPeer.
     function wireOftPeer(
         address        endpoint,

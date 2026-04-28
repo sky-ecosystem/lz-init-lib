@@ -103,7 +103,7 @@ contract LZInitE2ETest is Test {
         govOptionalDVNs[6] = DVN_NETHERMIND;
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.addGovRoute(
+        LZInit.wireGovPeer(
             ETH_ENDPOINT, BASE_EID,
             address(peer), address(l2GovRelay),
             SEND_LIB,

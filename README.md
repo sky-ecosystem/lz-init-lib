@@ -6,8 +6,8 @@ Reusable Solidity library for LayerZero configuration in Sky governance spells. 
 
 ### L1 Functions
 
-- **`addGovRoute`** — Add a governance route from LZ_GOV_SENDER to a new remote chain. Sets the peer, send library, DVN/executor config, and whitelists the L1GovernanceRelay via setCanCallTarget.
-- **`wireOftPeer`** — Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the other side will have been configured by a deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `relayWireOftPeer`.
+- **`wireGovPeer`** — Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by a deployer beforehand.
+- **`wireOftPeer`** — Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by a deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `relayWireOftPeer`.
 - **`activateOft`** — Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `relayActivateOft`.
 - **`updateRateLimits`** — Update rate limits on an OFT adapter for a given destination.
 

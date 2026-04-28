@@ -117,12 +117,12 @@ contract LZInitTest is Test {
     }
 
     // =====================
-    //  addGovRoute
+    //  wireGovPeer
     // =====================
 
-    function test_addGovRoute() public {
+    function test_wireGovPeer() public {
         vm.startPrank(PAUSE_PROXY);
-        LZInit.addGovRoute(
+        LZInit.wireGovPeer(
             ENDPOINT,
             DST_EID,
             govPeer,
