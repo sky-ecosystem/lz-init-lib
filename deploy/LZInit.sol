@@ -42,6 +42,11 @@ struct RateLimits {
     uint256 outboundLimit;
 }
 
+struct MessagingFee {
+    uint256 nativeFee;
+    uint256 lzTokenFee;
+}
+
 /// @dev DVN arrays in `sendUlnCfg` must be strictly ascending by address.
 struct GovConfig {
     address        peer;
@@ -86,11 +91,6 @@ interface OAppLike {
 
 interface GovOAppSenderLike is OAppLike {
     function setCanCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget, bool canCall) external;
-}
-
-struct MessagingFee {
-    uint256 nativeFee;
-    uint256 lzTokenFee;
 }
 
 interface L1GovernanceRelayLike {
@@ -146,7 +146,7 @@ library LZInit {
     uint16 internal constant MSG_TYPE_SEND_AND_CALL = 2;
 
     // ==================================
-    //  L1 functions
+    //  Configuration functions
     // ==================================
 
     /// @notice Connect LZ_GOV_SENDER to a new remote peer and whitelist
@@ -304,15 +304,15 @@ library LZInit {
         require(outLimit == 0, "LZInit/outbound-rl-nonzero");
         require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
 
-        require(ep.getSendLibrary(oft, dstEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
+        address sendLib    = ep.getSendLibrary(oft, dstEid);
         (address recvLib,) = ep.getReceiveLibrary(oft, dstEid);
+        require(sendLib == cfg.sendLib, "LZInit/send-lib-mismatch");
         require(recvLib == cfg.recvLib, "LZInit/recv-lib-mismatch");
 
         bytes memory execCfgRaw = ep.getConfig(oft, cfg.sendLib, dstEid, EXECUTOR_CONFIG_TYPE);
-        require(keccak256(execCfgRaw) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
-
         bytes memory sendUlnRaw = ep.getConfig(oft, cfg.sendLib, dstEid, ULN_CONFIG_TYPE);
         bytes memory recvUlnRaw = ep.getConfig(oft, cfg.recvLib, dstEid, ULN_CONFIG_TYPE);
+        require(keccak256(execCfgRaw) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
         require(keccak256(sendUlnRaw) == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
         require(keccak256(recvUlnRaw) == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
 

@@ -167,9 +167,9 @@ contract LZInitRelayTest is Test {
         cfg.recvUlnCfg = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, cfg.recvLib, ETH_EID, 2), (UlnConfig));
         cfg.optionsGas = 130_000;
 
-        address owner = OFTAdapterLike(avaxSusdsOft).owner();
-        address token = OFTAdapterLike(avaxSusdsOft).token();
         uint8   rlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
+        address token = OFTAdapterLike(avaxSusdsOft).token();
+        address owner = OFTAdapterLike(avaxSusdsOft).owner();
 
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,

@@ -11,8 +11,8 @@ import { LZInit, OftConfig, RateLimits } from "./LZInit.sol";
 contract LZL2Spell {
 
     function wireOftPeer(
-        address    oft,
-        uint32     dstEid,
+        address           oft,
+        uint32            dstEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits
     ) external {
