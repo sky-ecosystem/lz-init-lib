@@ -3,7 +3,7 @@ pragma solidity ^0.8.22;
 
 import "forge-std/Test.sol";
 
-import { LZInit, UlnConfig, ExecutorConfig, OftConfig, MessagingFee, EndpointLike, OAppLike, OFTAdapterLike } from "deploy/LZInit.sol";
+import { UlnConfig, ExecutorConfig, OftConfig, MessagingFee, EndpointLike, OAppLike, OFTAdapterLike } from "deploy/LZInit.sol";
 import { LZL2Spell } from "deploy/LZL2Spell.sol";
 
 import { Bridge }                from "xchain-helpers/testing/Bridge.sol";

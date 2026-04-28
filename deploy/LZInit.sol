@@ -345,22 +345,6 @@ library LZInit {
         );
     }
 
-    // ==================================
-    //  Star subproxy functions
-    // ==================================
-
-    /// @notice Configure the LZ endpoint for a non-OApp sender (e.g. Star subproxy using LZForwarder).
-    function initLZSender(
-        address        endpoint,
-        address        sender,
-        uint32         dstEid,
-        address        sendLib,
-        ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg
-    ) internal {
-        _wireEndpointSend(endpoint, sender, dstEid, sendLib, execCfg, sendUlnCfg);
-    }
-
     // --- Private helpers ---
 
     function _wireSend(

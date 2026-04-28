@@ -19,10 +19,6 @@ Each relay function encodes a call to the corresponding `LZL2Spell` function and
 - **`relayActivateOft`**
 - **`relayUpdateRateLimits`**
 
-### Star Subproxy
-
-- **`initLZSender`** — Configure the LZ endpoint for a non-OApp sender (e.g. Star subproxy using LZForwarder).
-
 ## L2 Spell (`LZL2Spell.sol`)
 
 Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, and `updateRateLimits` for remote execution via relay.
