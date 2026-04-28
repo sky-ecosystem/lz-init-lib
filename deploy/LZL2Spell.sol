@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.22;
 
-import { LZInit, ExecutorConfig, UlnConfig, OftConfig } from "./LZInit.sol";
+import { LZInit, OftConfig, RateLimits } from "./LZInit.sol";
 
 /**
  * @title  LZL2Spell
@@ -11,56 +11,28 @@ import { LZInit, ExecutorConfig, UlnConfig, OftConfig } from "./LZInit.sol";
 contract LZL2Spell {
 
     function wireOftPeer(
-        address        endpoint,
-        address        oft,
-        uint32         dstEid,
-        address        peer,
-        address        sendLib,
-        address        recvLib,
-        ExecutorConfig memory execCfg,
-        UlnConfig      memory sendUlnCfg,
-        UlnConfig      memory recvUlnCfg,
-        uint48         inboundWindow,
-        uint256        inboundLimit,
-        uint48         outboundWindow,
-        uint256        outboundLimit,
-        uint128        optionsGas
+        address    oft,
+        uint32     dstEid,
+        OftConfig  memory cfg,
+        RateLimits memory rateLimits
     ) external {
-        LZInit.wireOftPeer(
-            endpoint, oft, dstEid, peer,
-            sendLib, recvLib, execCfg, sendUlnCfg, recvUlnCfg,
-            inboundWindow, inboundLimit, outboundWindow, outboundLimit, optionsGas
-        );
+        LZInit.wireOftPeer(oft, dstEid, cfg, rateLimits);
     }
 
     function activateOft(
-        address oft,
-        address endpoint,
-        uint32  dstEid,
-        OftConfig memory expected,
-        uint48  inboundWindow,
-        uint256 inboundLimit,
-        uint48  outboundWindow,
-        uint256 outboundLimit
+        address           oft,
+        uint32            dstEid,
+        OftConfig  memory cfg,
+        RateLimits memory rateLimits,
+        uint8             rlAccountingType,
+        address           token,
+        address           owner
     ) external {
-        LZInit.activateOft(
-            oft, endpoint, dstEid, expected,
-            inboundWindow, inboundLimit, outboundWindow, outboundLimit
-        );
+        LZInit.activateOft(oft, dstEid, cfg, rateLimits, rlAccountingType, token, owner);
     }
 
-    function updateRateLimits(
-        address oft,
-        uint32  dstEid,
-        uint48  inboundWindow,
-        uint256 inboundLimit,
-        uint48  outboundWindow,
-        uint256 outboundLimit
-    ) external {
-        LZInit.updateRateLimits(
-            oft, dstEid,
-            inboundWindow, inboundLimit, outboundWindow, outboundLimit
-        );
+    function updateRateLimits(address oft, uint32 dstEid, RateLimits memory rateLimits) external {
+        LZInit.updateRateLimits(oft, dstEid, rateLimits);
     }
 
     function unpauseOft(address oft) external {
