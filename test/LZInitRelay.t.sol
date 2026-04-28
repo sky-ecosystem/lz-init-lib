@@ -4,6 +4,7 @@ pragma solidity ^0.8.22;
 import "forge-std/Test.sol";
 
 import {
+    LZInit,
     UlnConfig,
     ExecutorConfig,
     OftConfig,
@@ -32,7 +33,6 @@ struct TxParams {
 }
 
 interface GovSenderLike {
-    function sendTx(TxParams calldata params, MessagingFee calldata fee, address refundAddress) external payable;
     function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
 }
 
@@ -55,8 +55,8 @@ contract LZInitRelayTest is Test {
 
     ChainlogReadLike constant chainlog = ChainlogReadLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
 
+    address PAUSE_PROXY;
     address GOV_SENDER;
-    address L1_GOV_RELAY;
     address AVAX_GOV_OAPP_RECEIVER;
     address AVAX_USDS_OFT;
 
@@ -79,9 +79,9 @@ contract LZInitRelayTest is Test {
 
     function setUp() public {
         // Pinned to the block where SUSDS_OFT was configured for Avalanche, still with 0 rate limits.
-        mainnet      = getChain("mainnet").createSelectFork(24871363);
-        GOV_SENDER   = chainlog.getAddress("LZ_GOV_SENDER");
-        L1_GOV_RELAY = chainlog.getAddress("LZ_GOV_RELAY");
+        mainnet     = getChain("mainnet").createSelectFork(24871363);
+        PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
+        GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
 
         AVAX_GOV_OAPP_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
         AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
@@ -97,17 +97,25 @@ contract LZInitRelayTest is Test {
     function _relaySpell(bytes memory spellCallData) internal {
         mainnet.selectFork();
 
-        TxParams memory txParams = TxParams({
+        MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(TxParams({
             dstEid:       AVAX_EID,
             dstTarget:    bytes32(uint256(uint160(AVAX_L2_GOV_RELAY))),
             dstCallData:  abi.encodeCall(L2GovernanceRelayLike.relay, (address(l2Spell), spellCallData)),
             extraOptions: OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0)
-        });
+        }), false);
 
-        MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(txParams, false);
-        vm.deal(L1_GOV_RELAY, fee.nativeFee);
-        vm.prank(L1_GOV_RELAY);
-        GovSenderLike(GOV_SENDER).sendTx{value: fee.nativeFee}(txParams, fee, L1_GOV_RELAY);
+        vm.deal(PAUSE_PROXY, fee.nativeFee);
+        vm.startPrank(PAUSE_PROXY);
+        LZInit.relayToL2(
+            AVAX_EID,
+            AVAX_L2_GOV_RELAY,
+            address(l2Spell),
+            spellCallData,
+            OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0),
+            fee,
+            PAUSE_PROXY
+        );
+        vm.stopPrank();
 
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_OAPP_RECEIVER);
     }

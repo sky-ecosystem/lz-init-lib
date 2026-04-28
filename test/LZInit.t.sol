@@ -336,6 +336,13 @@ contract LZInitTest is Test {
         vm.expectRevert("LZInit/enforced-send-mismatch");
         this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
 
+        // Mock only MSG_TYPE_SEND_AND_CALL (=2) to a bad value so MSG_TYPE_SEND (=1) still matches.
+        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("enforcedOptions(uint32,uint16)", AVAX_EID, uint16(2)), abi.encode(bytes("bad")));
+        vm.expectRevert("LZInit/enforced-send-and-call-mismatch");
+        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        vm.clearMockedCalls();
+
         // --- Happy path ---
 
         (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
