@@ -3,11 +3,8 @@ pragma solidity ^0.8.22;
 
 import { LZInit, OftConfig, RateLimits } from "./LZInit.sol";
 
-/**
- * @title  LZL2Spell
- * @notice L2 spell for LZ configuration on remote chains.
- *         Deployed once per L2, delegatecalled by L2GovernanceRelay.
- */
+/// @notice L2 spell for LZ configuration on remote chains. Deployed once
+///         per L2, delegatecalled by L2GovernanceRelay.
 contract LZL2Spell {
 
     function wireOftPeer(

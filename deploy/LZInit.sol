@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity >=0.8.0;
 
-/*** Structs — importable by spells ***/
-
 struct SetConfigParam {
     uint32 eid;
     uint32 configType;
@@ -47,7 +45,7 @@ struct MessagingFee {
     uint256 lzTokenFee;
 }
 
-/// @dev DVN arrays in `sendUlnCfg` must be strictly ascending by address.
+// Note: DVN arrays in `sendUlnCfg` must be strictly ascending by address.
 struct GovConfig {
     address        peer;
     address        sendLib;
@@ -56,7 +54,7 @@ struct GovConfig {
     address        l2GovRelay;
 }
 
-/// @dev DVN arrays in each UlnConfig must be strictly ascending by address.
+// Note: DVN arrays in each UlnConfig must be strictly ascending by address.
 struct OftConfig {
     address        peer;
     address        sendLib;
@@ -66,8 +64,6 @@ struct OftConfig {
     UlnConfig      recvUlnCfg;
     uint128        optionsGas;
 }
-
-/*** Interfaces ***/
 
 interface ChainlogLike {
     function getAddress(bytes32) external view returns (address);
@@ -132,8 +128,6 @@ interface OFTAdapterLike is OAppLike {
     function rateLimitAccountingType() external view returns (uint8);
     function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
 }
-
-/*** Library ***/
 
 library LZInit {
 

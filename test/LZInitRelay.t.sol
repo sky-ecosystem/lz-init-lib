@@ -45,8 +45,6 @@ interface SkyOFTLike {
     function setPauser(address pauser, bool canPause) external;
 }
 
-/*** Relay tests ***/
-
 contract LZInitRelayTest is Test {
 
     using DomainHelpers   for *;

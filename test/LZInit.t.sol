@@ -29,8 +29,6 @@ interface SkyOFTLike {
     function setPauser(address pauser, bool canPause) external;
 }
 
-/*** Test contract ***/
-
 contract LZInitTest is Test {
 
     using OptionsBuilder for bytes;
