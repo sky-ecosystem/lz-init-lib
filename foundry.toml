@@ -2,17 +2,7 @@
 src = "deploy"
 out = "out"
 libs = ["lib"]
-via_ir = true
-remappings = [
-    'xchain-helpers/=lib/xchain-helpers/src/',
-    '@layerzerolabs/lz-evm-protocol-v2/=lib/xchain-helpers/lib/LayerZero-v2/packages/layerzero-v2/evm/protocol/',
-    '@layerzerolabs/lz-evm-messagelib-v2/=lib/xchain-helpers/lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib/',
-    'layerzerolabs/oapp-evm/=lib/xchain-helpers/lib/devtools/packages/oapp-evm/',
-    '@layerzerolabs/oft-evm/=lib/xchain-helpers/lib/devtools/packages/oft-evm/',
-    '@openzeppelin/contracts/=lib/xchain-helpers/lib/openzeppelin-contracts/contracts/',
-    'openzeppelin-contracts/contracts/=lib/xchain-helpers/lib/openzeppelin-contracts/contracts/',
-    'solidity-bytes-utils/=lib/xchain-helpers/lib/solidity-bytes-utils/',
-]
+evm_version = "cancun"
 
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
