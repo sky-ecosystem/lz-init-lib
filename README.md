@@ -2,14 +2,14 @@
 
 Library for Sky governance spells to help manage SkyLink and its extension to new chains.
 
-This repository provides library functions (`LZInit.sol`) intended to be imported and called from a governance spell. It does not contain deployment scripts: deploying and pre-configuring newly deployed remote contracts is the responsibility of a deployer and is assumed to happen separately, before the spell runs.
+This repository provides library functions (`LZInit.sol`) intended to be imported and called from a governance spell. It does not contain deployment scripts: deploying and pre-configuring newly deployed remote contracts is the responsibility of the deployer and is assumed to happen separately, before the spell runs.
 
 ## Library Functions (`LZInit.sol`)
 
 ### Configuration Functions
 
-- **`wireGovPeer`** — Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by a deployer beforehand.
-- **`wireOftPeer`** — Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by a deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`wireGovPeer`** — Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
+- **`wireOftPeer`** — Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`activateOft`** — Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`updateRateLimits`** — Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`unpauseOft`** — Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
@@ -40,7 +40,7 @@ If USDS OFTs on L1 and Avalanche have been paused, a spell is required to unpaus
 
 ### Activating a previously wired OFT
 
-If sUSDS OFTs on L1 and Avalanche have been wired together and had their ownership transferred to Sky, but their rate limits are still 0, a spell is required to activate them:
+If sUSDS OFTs on L1 and Avalanche have been wired together and had their ownership and LZ delegate transferred to Sky, but their rate limits are still 0, a spell is required to activate them:
 
 - `activateOft(SUSDS_OFT, AVAX_EID, ...)` — activate the L1 side
 - `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.activateOft, (AVAX_SUSDS_OFT, ...)))` — activate the Avalanche side
@@ -56,7 +56,7 @@ If two EVM remotes (e.g. Avalanche and Plasma) are each wired to L1 for USDS and
 
 ### Expanding SkyLink to a new chain
 
-To add Base as a new remote for both USDS and sUSDS, after a deployer has deployed and pre-configured Base's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
+To add Base as a new remote for both USDS and sUSDS, after the deployer has deployed and pre-configured Base's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
 
 - `wireGovPeer(BASE_EID, ...)` — add Base as a destination for `LZ_GOV_SENDER`
 - `wireOftPeer(USDS_OFT, BASE_EID, ...)` — connect L1 USDS to Base

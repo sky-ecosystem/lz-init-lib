@@ -151,8 +151,9 @@ library LZInit {
 
     /// @notice Connect LZ_GOV_SENDER to a new remote peer and whitelist
     ///         LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and
-    ///         the L2GovernanceRelay will have been configured by a deployer
+    ///         the L2GovernanceRelay must have been configured by the deployer
     ///         beforehand.
+    /// @dev    L1-only.
     function wireGovPeer(uint32 dstEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
@@ -166,10 +167,9 @@ library LZInit {
         );
     }
 
-    /// @notice Connect a local OFT adapter to a new remote peer. In the case
-    ///         of a new remote, the remote OFT adapter will have been
-    ///         configured by a deployer before its ownership is transferred
-    ///         to the L2GovernanceRelay.
+    /// @notice Connect a local OFT adapter to a new remote peer. The remote
+    ///         OFT adapter must have been pre-configured by the deployer and
+    ///         its ownership transferred to the L2GovernanceRelay beforehand.
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
     function wireOftPeer(
         address           oft,
@@ -187,14 +187,7 @@ library LZInit {
         recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(cfg.recvUlnCfg));
         EndpointLike(endpoint).setConfig(oft, cfg.recvLib, recvParams);
 
-        // Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(optionsGas, 0)
-        bytes memory options = abi.encodePacked(
-            hex"0003",  // OPTIONS_TYPE_3
-            uint8(1),   // WORKER_ID (executor)
-            uint16(17), // option data length
-            uint8(1),   // OPTION_TYPE_LZRECEIVE
-            cfg.optionsGas
-        );
+        bytes memory options = _encodeLzReceiveOptions(cfg.optionsGas);
         EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
         opts[0] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND,          options);
         opts[1] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND_AND_CALL, options);
@@ -244,8 +237,8 @@ library LZInit {
     /// @notice Relay an arbitrary call to an LZL2Spell on a destination chain
     ///         via the LZ governance bridge. Spell authors construct
     ///         `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
-    /// @dev    LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER for
-    ///         (dstEid, l2GovRelay). LZL2Spell must be deployed on the
+    /// @dev    L1-only. LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER
+    ///         for (dstEid, l2GovRelay). LZL2Spell must be deployed on the
     ///         destination chain.
     function relayToL2(
         uint32              dstEid,
@@ -281,6 +274,17 @@ library LZInit {
         EndpointLike(endpoint).setConfig(oappSender, sendLib, sendParams);
     }
 
+    /// @dev Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(gas, 0).
+    function _encodeLzReceiveOptions(uint128 gas) private pure returns (bytes memory) {
+        return abi.encodePacked(
+            hex"0003",  // OPTIONS_TYPE_3
+            uint8(1),   // WORKER_ID (executor)
+            uint16(17), // option data length (1 byte option type + 16 bytes gas)
+            uint8(1),   // OPTION_TYPE_LZRECEIVE
+            gas
+        );
+    }
+
     function _verifyOftConfig(
         address          oft,
         uint32           dstEid,
@@ -304,19 +308,15 @@ library LZInit {
         require(outLimit == 0, "LZInit/outbound-rl-nonzero");
         require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
 
-        address sendLib    = ep.getSendLibrary(oft, dstEid);
+        require(ep.getSendLibrary(oft, dstEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
         (address recvLib,) = ep.getReceiveLibrary(oft, dstEid);
-        require(sendLib == cfg.sendLib, "LZInit/send-lib-mismatch");
         require(recvLib == cfg.recvLib, "LZInit/recv-lib-mismatch");
 
-        bytes memory execCfgRaw = ep.getConfig(oft, cfg.sendLib, dstEid, EXECUTOR_CONFIG_TYPE);
-        bytes memory sendUlnRaw = ep.getConfig(oft, cfg.sendLib, dstEid, ULN_CONFIG_TYPE);
-        bytes memory recvUlnRaw = ep.getConfig(oft, cfg.recvLib, dstEid, ULN_CONFIG_TYPE);
-        require(keccak256(execCfgRaw) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
-        require(keccak256(sendUlnRaw) == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
-        require(keccak256(recvUlnRaw) == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.sendLib, dstEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.sendLib, dstEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.recvLib, dstEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
 
-        bytes memory expectedOptions = abi.encodePacked(hex"0003", uint8(1), uint16(17), uint8(1), cfg.optionsGas);
+        bytes memory expectedOptions = _encodeLzReceiveOptions(cfg.optionsGas);
         require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
         require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND_AND_CALL)) == keccak256(expectedOptions), "LZInit/enforced-send-and-call-mismatch");
     }
