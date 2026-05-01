@@ -176,8 +176,8 @@ contract LZInitTest is Test {
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
             inboundLimit:   5_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  5_000_000e18
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
         });
 
         vm.startPrank(PAUSE_PROXY);
@@ -253,9 +253,9 @@ contract LZInitTest is Test {
     function test_activateOft() public {
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
-            inboundLimit:   2_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  2_000_000e18
+            inboundLimit:   5_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
         });
 
         OftConfig memory cfg;
@@ -363,22 +363,29 @@ contract LZInitTest is Test {
     // ==================================
 
     function test_updateRateLimits() public {
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(USDS_OFT).inboundRateLimits(AVAX_EID);
+        assertEq(ibWindow, 1 days);
+        assertEq(ibLimit,  5_000_000e18);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(USDS_OFT).outboundRateLimits(AVAX_EID);
+        assertEq(obWindow, 1 days);
+        assertEq(obLimit,  5_000_000e18);
+
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
-            inboundLimit:   3_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  3_000_000e18
+            inboundLimit:   10_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  10_000_000e18 + 1
         });
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.updateRateLimits(SUSDS_OFT, AVAX_EID, rl);
+        LZInit.updateRateLimits(USDS_OFT, AVAX_EID, rl);
         vm.stopPrank();
 
-        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(SUSDS_OFT).inboundRateLimits(AVAX_EID);
+        (, ibWindow,, ibLimit) = OFTAdapterLike(USDS_OFT).inboundRateLimits(AVAX_EID);
         assertEq(ibWindow, rl.inboundWindow);
         assertEq(ibLimit,  rl.inboundLimit);
 
-        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(SUSDS_OFT).outboundRateLimits(AVAX_EID);
+        (, obWindow,, obLimit) = OFTAdapterLike(USDS_OFT).outboundRateLimits(AVAX_EID);
         assertEq(obWindow, rl.outboundWindow);
         assertEq(obLimit,  rl.outboundLimit);
     }

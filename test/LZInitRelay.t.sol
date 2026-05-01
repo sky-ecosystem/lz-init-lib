@@ -135,8 +135,8 @@ contract LZInitRelayTest is Test {
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
             inboundLimit:   5_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  5_000_000e18
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
         });
 
         _relaySpell(abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, cfg, rl)));
@@ -146,10 +146,12 @@ contract LZInitRelayTest is Test {
         (address recvLib,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(AVAX_USDS_OFT, BASE_EID);
         assertEq(recvLib, AVAX_RECV_LIB);
 
-        (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(BASE_EID);
-        assertEq(ibLimit, rl.inboundLimit);
-        (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(BASE_EID);
-        assertEq(obLimit, rl.outboundLimit);
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(BASE_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(BASE_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
 
         bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(cfg.optionsGas, 0);
         assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(BASE_EID, 1), expectedOpts);
@@ -179,9 +181,9 @@ contract LZInitRelayTest is Test {
 
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
-            inboundLimit:   2_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  2_000_000e18
+            inboundLimit:   5_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
         });
 
         _relaySpell(abi.encodeCall(
@@ -189,26 +191,37 @@ contract LZInitRelayTest is Test {
             (avaxSusdsOft, ETH_EID, cfg, rl, rlAt, token, owner)
         ));
 
-        (,,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
-        assertEq(ibLimit, rl.inboundLimit);
-        (,,, uint256 obLimit) = OFTAdapterLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
-        assertEq(obLimit, rl.outboundLimit);
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
     }
 
     function test_relayUpdateRateLimits() public {
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, 1 days);
+        assertEq(ibLimit,  5_000_000e18);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, 1 days);
+        assertEq(obLimit,  5_000_000e18);
+
         RateLimits memory rl = RateLimits({
             inboundWindow:  1 days,
             inboundLimit:   10_000_000e18,
-            outboundWindow: 1 days,
-            outboundLimit:  10_000_000e18
+            outboundWindow: 1 days + 1,
+            outboundLimit:  10_000_000e18 + 1
         });
 
         _relaySpell(abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, rl)));
 
-        (,,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
-        assertEq(ibLimit, rl.inboundLimit);
-        (,,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
-        assertEq(obLimit, rl.outboundLimit);
+        (, ibWindow,, ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, obWindow,, obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
     }
 
     function test_relayUnpauseOft() public {
