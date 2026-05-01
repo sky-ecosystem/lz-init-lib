@@ -3,6 +3,3 @@ src = "deploy"
 out = "out"
 libs = ["lib"]
 evm_version = "cancun"
-
-[rpc_endpoints]
-mainnet = "${MAINNET_RPC_URL}"

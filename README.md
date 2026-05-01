@@ -75,7 +75,7 @@ forge build
 ## Test
 
 ```shell
-MAINNET_RPC_URL=<mainnet_rpc> forge test
+MAINNET_RPC_URL=<mainnet_rpc> AVALANCHE_RPC_URL=<avalanche_rpc> forge test
 ```
 
-Tests fork mainnet and Avalanche at pinned historical blocks, so both RPCs must be archive-capable. Set `MAINNET_RPC_URL` for the mainnet fork; if `AVALANCHE_RPC_URL` is unset, forge-std's built-in default (`https://api.avax.network/ext/bc/C/rpc`) is used.
+Tests fork mainnet and Avalanche at pinned historical blocks, so both RPCs must be archive-capable. `MAINNET_RPC_URL` is required (used internally by `xchain-helpers`); `AVALANCHE_RPC_URL` is optional and falls back to forge-std's default if unset.

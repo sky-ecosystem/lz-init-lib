@@ -70,7 +70,7 @@ contract LZInitTest is Test {
 
     function setUp() public {
         // Pinned to the block where SUSDS_OFT was configured for Avalanche, still with 0 rate limits.
-        vm.createSelectFork("mainnet", 24871363);
+        vm.createSelectFork(getChain("mainnet").rpcUrl, 24871363);
 
         PAUSE_PROXY  = chainlog.getAddress("MCD_PAUSE_PROXY");
         GOV_SENDER   = chainlog.getAddress("LZ_GOV_SENDER");
