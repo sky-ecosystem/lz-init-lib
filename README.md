@@ -8,19 +8,20 @@ This repository provides library functions (`LZInit.sol`) intended to be importe
 
 ### Configuration Functions
 
-- **`wireGovPeer`** — Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
-- **`wireOftPeer`** — Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`activateOft`** — Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`updateRateLimits`** — Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`unpauseOft`** — Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
+- **`wireOftPeer`** - Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`updateRateLimits`** - Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`setUlnConfig`** - Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`unpauseOft`** - Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 
 ### Relay (L1 → L2)
 
-- **`relayToL2`** — Forward an arbitrary call to an `LZL2Spell` on a destination chain via the LZ governance bridge. Spell authors construct `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
+- **`relayToL2`** - Forward an arbitrary call to an `LZL2Spell` on a destination chain via the LZ governance bridge. Spell authors construct `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
 
 ## L2 Spell (`LZL2Spell.sol`)
 
-Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, and `unpauseOft` for remote execution via `relayToL2`.
+Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, `setUlnConfig`, and `unpauseOft` for remote execution via `relayToL2`.
 
 ## Use Cases
 
@@ -38,33 +39,58 @@ If USDS OFTs on L1 and Avalanche have been paused, a spell is required to unpaus
 - `updateRateLimits(USDS_OFT, AVAX_EID, ...)` for the L1 side
 - `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, ...)))` for the Avalanche side
 
+### Migrating to a new DVN set
+
+#### OFT bridge
+
+For simplicity we assume the new DVN set is a superset of the old required set.
+
+Spell 1 (update sending sides):
+
+- `setUlnConfig(USDS_OFT, AVAX_EID, ETH_SEND_LIB, newUlnCfg)` - L1 send (Eth→Avax)
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_SEND_LIB, newUlnCfg)))` - L2 send (Avax→Eth)
+
+(wait long enough for any old-signed in-flight messages to settle against the still-old receive side)
+
+Spell 2 (update receiving sides):
+
+- `setUlnConfig(USDS_OFT, AVAX_EID, ETH_RECV_LIB, newUlnCfg)` - L1 receive (Avax→Eth)
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
+
+#### Governance bridge
+
+The relayed call is dispatched under the still-current send-side DVNs and applies the receive-side update on landing; the spell then directly updates the send side.
+
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_GOV_RECEIVER, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
+- `setUlnConfig(LZ_GOV_SENDER, AVAX_EID, ETH_SEND_LIB, newUlnCfg)` - L1 send (Eth→Avax)
+
 ### Activating a previously wired OFT
 
 If sUSDS OFTs on L1 and Avalanche have been wired together and had their ownership and LZ delegate transferred to Sky, but their rate limits are still 0, a spell is required to activate them:
 
-- `activateOft(SUSDS_OFT, AVAX_EID, ...)` — activate the L1 side
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.activateOft, (AVAX_SUSDS_OFT, ...)))` — activate the Avalanche side
+- `activateOft(SUSDS_OFT, AVAX_EID, ...)` - activate the L1 side
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.activateOft, (AVAX_SUSDS_OFT, ...)))` - activate the Avalanche side
 
 ### Wiring two existing remotes together
 
 If two EVM remotes (e.g. Avalanche and Plasma) are each wired to L1 for USDS and sUSDS but not to one another, an L1 spell is required to wire them together:
 
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, PLASMA_EID, ...)))` — wire Avalanche's USDS to Plasma
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, PLASMA_EID, ...)))` — wire Avalanche's sUSDS to Plasma
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, AVAX_EID, ...)))` — wire Plasma's USDS to Avalanche
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, AVAX_EID, ...)))` — wire Plasma's sUSDS to Avalanche
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's USDS to Plasma
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's sUSDS to Plasma
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, AVAX_EID, ...)))` - wire Plasma's USDS to Avalanche
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, AVAX_EID, ...)))` - wire Plasma's sUSDS to Avalanche
 
 ### Expanding SkyLink to a new chain
 
 To add Base as a new remote for both USDS and sUSDS, after the deployer has deployed and pre-configured Base's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
 
-- `wireGovPeer(BASE_EID, ...)` — add Base as a destination for `LZ_GOV_SENDER`
-- `wireOftPeer(USDS_OFT, BASE_EID, ...)` — connect L1 USDS to Base
-- `wireOftPeer(SUSDS_OFT, BASE_EID, ...)` — connect L1 sUSDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, ...)))` — wire Avalanche USDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)))` — wire Avalanche sUSDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)))` — wire Plasma USDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)))` — wire Plasma sUSDS to Base
+- `wireGovPeer(BASE_EID, ...)` - add Base as a destination for `LZ_GOV_SENDER`
+- `wireOftPeer(USDS_OFT, BASE_EID, ...)` - connect L1 USDS to Base
+- `wireOftPeer(SUSDS_OFT, BASE_EID, ...)` - connect L1 sUSDS to Base
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, ...)))` - wire Avalanche USDS to Base
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)))` - wire Avalanche sUSDS to Base
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)))` - wire Plasma USDS to Base
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)))` - wire Plasma sUSDS to Base
 
 ## Build
 

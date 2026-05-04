@@ -219,17 +219,17 @@ contract LZInitTest is Test {
     // External helper for vm.expectRevert (LZInit functions are internal/inlined)
     function callActivateOft(
         address           oft,
-        uint32            dstEid,
+        uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
         address           owner
     ) external {
-        LZInit.activateOft(oft, dstEid, cfg, rateLimits, rlAccountingType, token, owner);
+        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner);
     }
 
-    function _loadExpectedConfig(address oft, uint32 dstEid) internal view returns (
+    function _loadExpectedConfig(address oft, uint32 remoteEid) internal view returns (
         OftConfig memory cfg,
         uint8            rlAccountingType,
         address          token,
@@ -237,12 +237,12 @@ contract LZInitTest is Test {
     ) {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
         EndpointLike   ep   = EndpointLike(oft_.endpoint());
-        cfg.peer       = address(uint160(uint256(oft_.peers(dstEid))));
-        cfg.sendLib    = ep.getSendLibrary(oft, dstEid);
-        (cfg.recvLib,) = ep.getReceiveLibrary(oft, dstEid);
-        cfg.execCfg    = abi.decode(ep.getConfig(oft, cfg.sendLib, dstEid, 1), (ExecutorConfig));
-        cfg.sendUlnCfg = abi.decode(ep.getConfig(oft, cfg.sendLib, dstEid, 2), (UlnConfig));
-        cfg.recvUlnCfg = abi.decode(ep.getConfig(oft, cfg.recvLib, dstEid, 2), (UlnConfig));
+        cfg.peer       = address(uint160(uint256(oft_.peers(remoteEid))));
+        cfg.sendLib    = ep.getSendLibrary(oft, remoteEid);
+        (cfg.recvLib,) = ep.getReceiveLibrary(oft, remoteEid);
+        cfg.execCfg    = abi.decode(ep.getConfig(oft, cfg.sendLib, remoteEid, 1), (ExecutorConfig));
+        cfg.sendUlnCfg = abi.decode(ep.getConfig(oft, cfg.sendLib, remoteEid, 2), (UlnConfig));
+        cfg.recvUlnCfg = abi.decode(ep.getConfig(oft, cfg.recvLib, remoteEid, 2), (UlnConfig));
         cfg.optionsGas = 130_000;
 
         rlAccountingType = oft_.rateLimitAccountingType();
@@ -388,6 +388,43 @@ contract LZInitTest is Test {
         (, obWindow,, obLimit) = OFTAdapterLike(USDS_OFT).outboundRateLimits(AVAX_EID);
         assertEq(obWindow, rl.outboundWindow);
         assertEq(obLimit,  rl.outboundLimit);
+    }
+
+    // ==================================
+    //  setUlnConfig
+    // ==================================
+
+    function test_setUlnConfig() public {
+        // Sanity: USDS_OFT is wired to AVAX_EID with the production 2-of-2 (LZ Labs + Nethermind) send config.
+        UlnConfig memory current = abi.decode(
+            EndpointLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, AVAX_EID, 2),
+            (UlnConfig)
+        );
+        assertEq(current.confirmations,    15);
+        assertEq(current.requiredDVNCount, 2);
+        assertEq(current.optionalDVNCount, 0);
+
+        // Migrate to a 4-of-4 required DVN set: {Horizen, LZ Labs, Canary, Nethermind} (sorted by address).
+        address[] memory newRequiredDVNs = new address[](4);
+        newRequiredDVNs[0] = DVN_HORIZEN;
+        newRequiredDVNs[1] = DVN_LZ_LABS;
+        newRequiredDVNs[2] = DVN_CANARY;
+        newRequiredDVNs[3] = DVN_NETHERMIND;
+
+        UlnConfig memory newCfg = UlnConfig({
+            confirmations:        15,
+            requiredDVNCount:     4,
+            optionalDVNCount:     0,
+            optionalDVNThreshold: 0,
+            requiredDVNs:         newRequiredDVNs,
+            optionalDVNs:         new address[](0)
+        });
+
+        vm.startPrank(PAUSE_PROXY);
+        LZInit.setUlnConfig(USDS_OFT, AVAX_EID, SEND_LIB, newCfg);
+        vm.stopPrank();
+
+        _verifyUlnConfig(EndpointLike(ENDPOINT).getConfig(USDS_OFT, SEND_LIB, AVAX_EID, 2), newCfg);
     }
 
     // ==================================

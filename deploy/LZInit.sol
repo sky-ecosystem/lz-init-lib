@@ -102,17 +102,18 @@ interface L1GovernanceRelayLike {
 }
 
 interface LZL2SpellLike {
-    function wireOftPeer(address oft, uint32 dstEid, OftConfig memory cfg, RateLimits memory rateLimits) external;
+    function wireOftPeer(address oft, uint32 remoteEid, OftConfig memory cfg, RateLimits memory rateLimits) external;
     function activateOft(
         address           oft,
-        uint32            dstEid,
+        uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
         address           owner
     ) external;
-    function updateRateLimits(address oft, uint32 dstEid, RateLimits memory rateLimits) external;
+    function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) external;
+    function setUlnConfig(address oapp, uint32 remoteEid, address lib, UlnConfig memory ulnCfg) external;
     function unpauseOft(address oft) external;
 }
 
@@ -148,14 +149,14 @@ library LZInit {
     ///         the L2GovernanceRelay must have been configured by the deployer
     ///         beforehand.
     /// @dev    L1-only.
-    function wireGovPeer(uint32 dstEid, GovConfig memory cfg) internal {
+    function wireGovPeer(uint32 remoteEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
-        _wireSend(OAppLike(govOappSender).endpoint(), govOappSender, dstEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
+        _wireSend(OAppLike(govOappSender).endpoint(), govOappSender, remoteEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
 
         GovOAppSenderLike(govOappSender).setCanCallTarget(
             chainlog.getAddress("LZ_GOV_RELAY"),
-            dstEid,
+            remoteEid,
             bytes32(uint256(uint160(cfg.l2GovRelay))),
             true
         );
@@ -167,27 +168,27 @@ library LZInit {
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
     function wireOftPeer(
         address           oft,
-        uint32            dstEid,
+        uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits
     ) internal {
         address endpoint = OAppLike(oft).endpoint();
 
-        _wireSend(endpoint, oft, dstEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
+        _wireSend(endpoint, oft, remoteEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
 
-        EndpointLike(endpoint).setReceiveLibrary(oft, dstEid, cfg.recvLib, 0);
+        EndpointLike(endpoint).setReceiveLibrary(oft, remoteEid, cfg.recvLib, 0);
 
         SetConfigParam[] memory recvParams = new SetConfigParam[](1);
-        recvParams[0] = SetConfigParam(dstEid, ULN_CONFIG_TYPE, abi.encode(cfg.recvUlnCfg));
+        recvParams[0] = SetConfigParam(remoteEid, ULN_CONFIG_TYPE, abi.encode(cfg.recvUlnCfg));
         EndpointLike(endpoint).setConfig(oft, cfg.recvLib, recvParams);
 
         bytes memory options = _encodeLzReceiveOptions(cfg.optionsGas);
         EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
-        opts[0] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND,          options);
-        opts[1] = EnforcedOptionParam(dstEid, MSG_TYPE_SEND_AND_CALL, options);
+        opts[0] = EnforcedOptionParam(remoteEid, MSG_TYPE_SEND,          options);
+        opts[1] = EnforcedOptionParam(remoteEid, MSG_TYPE_SEND_AND_CALL, options);
         OFTAdapterLike(oft).setEnforcedOptions(opts);
 
-        updateRateLimits(oft, dstEid, rateLimits);
+        updateRateLimits(oft, remoteEid, rateLimits);
     }
 
     /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1,
@@ -197,25 +198,38 @@ library LZInit {
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
     function activateOft(
         address           oft,
-        uint32            dstEid,
+        uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
         address           owner
     ) internal {
-        _verifyOftConfig(oft, dstEid, cfg, rlAccountingType, token, owner);
-        updateRateLimits(oft, dstEid, rateLimits);
+        _verifyOftConfig(oft, remoteEid, cfg, rlAccountingType, token, owner);
+        updateRateLimits(oft, remoteEid, rateLimits);
     }
 
     /// @notice Update rate limits on an OFT adapter for a given destination.
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
-    function updateRateLimits(address oft, uint32 dstEid, RateLimits memory rateLimits) internal {
+    function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) internal {
         RateLimitConfig[] memory inboundCfg  = new RateLimitConfig[](1);
         RateLimitConfig[] memory outboundCfg = new RateLimitConfig[](1);
-        inboundCfg[0]  = RateLimitConfig(dstEid, rateLimits.inboundWindow,  rateLimits.inboundLimit);
-        outboundCfg[0] = RateLimitConfig(dstEid, rateLimits.outboundWindow, rateLimits.outboundLimit);
+        inboundCfg[0]  = RateLimitConfig(remoteEid, rateLimits.inboundWindow,  rateLimits.inboundLimit);
+        outboundCfg[0] = RateLimitConfig(remoteEid, rateLimits.outboundWindow, rateLimits.outboundLimit);
         OFTAdapterLike(oft).setRateLimits(inboundCfg, outboundCfg);
+    }
+
+    /// @notice Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid.
+    /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
+    function setUlnConfig(
+        address          oapp,
+        uint32           remoteEid,
+        address          lib,
+        UlnConfig memory ulnCfg
+    ) internal {
+        SetConfigParam[] memory params = new SetConfigParam[](1);
+        params[0] = SetConfigParam(remoteEid, ULN_CONFIG_TYPE, abi.encode(ulnCfg));
+        EndpointLike(OAppLike(oapp).endpoint()).setConfig(oapp, lib, params);
     }
 
     /// @notice Unpause an OFT adapter.
@@ -232,10 +246,10 @@ library LZInit {
     ///         via the LZ governance bridge. Spell authors construct
     ///         `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
     /// @dev    L1-only. LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER
-    ///         for (dstEid, l2GovRelay). LZL2Spell must be deployed on the
+    ///         for (remoteEid, l2GovRelay). LZL2Spell must be deployed on the
     ///         destination chain.
     function relayToL2(
-        uint32              dstEid,
+        uint32              remoteEid,
         address             l2GovRelay,
         address             l2Spell,
         bytes        memory targetData,
@@ -244,7 +258,7 @@ library LZInit {
         address             refundAddress
     ) internal {
         L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
-            dstEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
+            remoteEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
         );
     }
 
@@ -253,18 +267,18 @@ library LZInit {
     function _wireSend(
         address               endpoint,
         address               oappSender,
-        uint32                dstEid,
+        uint32                remoteEid,
         address               oappReceiver,
         address               sendLib,
         ExecutorConfig memory execCfg,
         UlnConfig      memory sendUlnCfg
     ) private {
-        OAppLike(oappSender).setPeer(dstEid, bytes32(uint256(uint160(oappReceiver))));
-        EndpointLike(endpoint).setSendLibrary(oappSender, dstEid, sendLib);
+        OAppLike(oappSender).setPeer(remoteEid, bytes32(uint256(uint160(oappReceiver))));
+        EndpointLike(endpoint).setSendLibrary(oappSender, remoteEid, sendLib);
 
         SetConfigParam[] memory sendParams = new SetConfigParam[](2);
-        sendParams[0] = SetConfigParam(dstEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
-        sendParams[1] = SetConfigParam(dstEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
+        sendParams[0] = SetConfigParam(remoteEid, EXECUTOR_CONFIG_TYPE, abi.encode(execCfg));
+        sendParams[1] = SetConfigParam(remoteEid, ULN_CONFIG_TYPE,      abi.encode(sendUlnCfg));
         EndpointLike(endpoint).setConfig(oappSender, sendLib, sendParams);
     }
 
@@ -281,7 +295,7 @@ library LZInit {
 
     function _verifyOftConfig(
         address          oft,
-        uint32           dstEid,
+        uint32           remoteEid,
         OftConfig memory cfg,
         uint8            rlAccountingType,
         address          token,
@@ -290,29 +304,29 @@ library LZInit {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
         EndpointLike   ep   = EndpointLike(oft_.endpoint());
 
-        require(oft_.peers(dstEid)             == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
+        require(oft_.peers(remoteEid)             == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
         require(!oft_.paused(),                                                        "LZInit/paused");
         require(oft_.rateLimitAccountingType() == rlAccountingType,                    "LZInit/rl-accounting-mismatch");
         require(oft_.token()                   == token,                               "LZInit/token-mismatch");
         require(oft_.owner()                   == owner,                               "LZInit/owner-mismatch");
         require(ep.delegates(oft)              == owner,                               "LZInit/delegate-mismatch");
 
-        (,,, uint256 outLimit) = oft_.outboundRateLimits(dstEid);
-        (,,, uint256 inLimit)  = oft_.inboundRateLimits(dstEid);
+        (,,, uint256 outLimit) = oft_.outboundRateLimits(remoteEid);
+        (,,, uint256 inLimit)  = oft_.inboundRateLimits(remoteEid);
         require(outLimit == 0, "LZInit/outbound-rl-nonzero");
         require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
 
-        require(ep.getSendLibrary(oft, dstEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
-        (address recvLib,) = ep.getReceiveLibrary(oft, dstEid);
+        require(ep.getSendLibrary(oft, remoteEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
+        (address recvLib,) = ep.getReceiveLibrary(oft, remoteEid);
         require(recvLib == cfg.recvLib, "LZInit/recv-lib-mismatch");
 
-        require(keccak256(ep.getConfig(oft, cfg.sendLib, dstEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
-        require(keccak256(ep.getConfig(oft, cfg.sendLib, dstEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
-        require(keccak256(ep.getConfig(oft, cfg.recvLib, dstEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.sendLib, remoteEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.sendLib, remoteEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
+        require(keccak256(ep.getConfig(oft, cfg.recvLib, remoteEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
 
         bytes memory expectedOptions = _encodeLzReceiveOptions(cfg.optionsGas);
-        require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
-        require(keccak256(oft_.enforcedOptions(dstEid, MSG_TYPE_SEND_AND_CALL)) == keccak256(expectedOptions), "LZInit/enforced-send-and-call-mismatch");
+        require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
+        require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND_AND_CALL)) == keccak256(expectedOptions), "LZInit/enforced-send-and-call-mismatch");
     }
 
 }

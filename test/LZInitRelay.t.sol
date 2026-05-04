@@ -55,7 +55,7 @@ contract LZInitRelayTest is Test {
 
     address PAUSE_PROXY;
     address GOV_SENDER;
-    address AVAX_GOV_OAPP_RECEIVER;
+    address AVAX_GOV_RECEIVER;
     address AVAX_USDS_OFT;
 
     // --- Avalanche (existing deployment, not resolvable from mainnet) ---
@@ -64,8 +64,10 @@ contract LZInitRelayTest is Test {
     address constant AVAX_SEND_LIB          = 0x197D1333DEA5Fe0D6600E9b396c7f1B1cFCc558a;
     address constant AVAX_RECV_LIB          = 0xbf3521d309642FA9B1c91A08609505BA09752c61;
     address constant AVAX_EXECUTOR          = 0x90E595783E43eb89fF07f63d27B8430e6B44bD9c;
+    address constant AVAX_DVN_HORIZEN       = 0x07C05EaB7716AcB6f83ebF6268F8EECDA8892Ba1;
     address constant AVAX_DVN_LZ_LABS       = 0x962F502A63F5FBeB44DC9ab932122648E8352959;
     address constant AVAX_DVN_NETHERMIND    = 0xa59BA433ac34D2927232918Ef5B2eaAfcF130BA5;
+    address constant AVAX_DVN_CANARY        = 0xcC49E6fca014c77E1Eb604351cc1E08C84511760;
 
     uint32 constant ETH_EID  = 30101;
     uint32 constant BASE_EID = 30184;
@@ -81,7 +83,7 @@ contract LZInitRelayTest is Test {
         PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
         GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
 
-        AVAX_GOV_OAPP_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
+        AVAX_GOV_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
         AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
 
         // Pinned to the block where sUSDS's remote OFT was configured on Avalanche, still with 0 rate limits.
@@ -115,7 +117,7 @@ contract LZInitRelayTest is Test {
         );
         vm.stopPrank();
 
-        bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_OAPP_RECEIVER);
+        bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
     }
 
     function test_relayWireOftPeer() public {
@@ -222,6 +224,47 @@ contract LZInitRelayTest is Test {
         (, obWindow,, obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
         assertEq(obWindow, rl.outboundWindow);
         assertEq(obLimit,  rl.outboundLimit);
+    }
+
+    function test_relaySetUlnConfig() public {
+        UlnConfig memory current = abi.decode(
+            EndpointLike(AVAX_ENDPOINT).getConfig(AVAX_USDS_OFT, AVAX_SEND_LIB, ETH_EID, 2),
+            (UlnConfig)
+        );
+        assertEq(current.confirmations,    12);
+        assertEq(current.requiredDVNCount, 2);
+        assertEq(current.optionalDVNCount, 0);
+
+        // Migrate to a 4-of-4 required DVN set: {Horizen, LZ Labs, Nethermind, Canary} (sorted by address).
+        address[] memory newRequiredDVNs = new address[](4);
+        newRequiredDVNs[0] = AVAX_DVN_HORIZEN;
+        newRequiredDVNs[1] = AVAX_DVN_LZ_LABS;
+        newRequiredDVNs[2] = AVAX_DVN_NETHERMIND;
+        newRequiredDVNs[3] = AVAX_DVN_CANARY;
+
+        UlnConfig memory newCfg = UlnConfig({
+            confirmations:        12,
+            requiredDVNCount:     4,
+            optionalDVNCount:     0,
+            optionalDVNThreshold: 0,
+            requiredDVNs:         newRequiredDVNs,
+            optionalDVNs:         new address[](0)
+        });
+
+        _relaySpell(abi.encodeCall(LZL2Spell.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_SEND_LIB, newCfg)));
+
+        UlnConfig memory updated = abi.decode(
+            EndpointLike(AVAX_ENDPOINT).getConfig(AVAX_USDS_OFT, AVAX_SEND_LIB, ETH_EID, 2),
+            (UlnConfig)
+        );
+        assertEq(updated.confirmations,        12);
+        assertEq(updated.requiredDVNCount,     4);
+        assertEq(updated.optionalDVNCount,     0);
+        assertEq(updated.requiredDVNs.length,  4);
+        assertEq(updated.requiredDVNs[0],      AVAX_DVN_HORIZEN);
+        assertEq(updated.requiredDVNs[1],      AVAX_DVN_LZ_LABS);
+        assertEq(updated.requiredDVNs[2],      AVAX_DVN_NETHERMIND);
+        assertEq(updated.requiredDVNs[3],      AVAX_DVN_CANARY);
     }
 
     function test_relayUnpauseOft() public {
