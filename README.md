@@ -23,6 +23,10 @@ This repository provides library functions (`LZInit.sol`) intended to be importe
 
 Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, `setUlnConfig`, and `unpauseOft` for remote execution via `relayToL2`.
 
+## Disclaimer: ordering of relayed calls
+
+Given LZ does not guarantee the execution order of relayed calls, if a spell has more than one relayed call and order matters for safety, consider splitting the work across multiple spells.
+
 ## Use Cases
 
 The use cases below assume Avalanche and Plasma each have USDS and sUSDS OFTs wired to L1, but not to each other.
