@@ -59,9 +59,16 @@ Spell 2 (update receiving sides):
 
 #### Governance bridge
 
-The relayed call is dispatched under the still-current send-side DVNs and applies the receive-side update on landing; the spell then directly updates the send side.
+A quirk in LZ's off-chain DVN tooling makes the single-spell form fail in practice, so the migration is split across two.
+
+Spell 1 (update receive side):
 
 - `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_GOV_RECEIVER, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
+
+(wait for the L2 update to land; halt gov bridge messaging until Spell 2 executes)
+
+Spell 2 (update send side):
+
 - `setUlnConfig(LZ_GOV_SENDER, AVAX_EID, ETH_SEND_LIB, newUlnCfg)` - L1 send (Eth→Avax)
 
 ### Activating a previously wired OFT
