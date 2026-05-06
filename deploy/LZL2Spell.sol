@@ -7,6 +7,8 @@ import { LZInit, OftConfig, RateLimits, UlnConfig } from "./LZInit.sol";
 ///         per L2, delegatecalled by L2GovernanceRelay.
 contract LZL2Spell {
 
+    address public immutable SELF = address(this);
+
     function wireOftPeer(
         address           oft,
         uint32            remoteEid,
@@ -43,6 +45,21 @@ contract LZL2Spell {
 
     function unpauseOft(address oft) external {
         LZInit.unpauseOft(oft);
+    }
+
+    /// @dev Based on https://github.com/sky-ecosystem/lockstake/blob/e389dc18fa21b5ae460714522a9f484d0b1b9f30/src/Multicall.sol#L9,
+    ///      using `SELF` instead of `address(this)` because this contract
+    ///      runs in the relay's context.
+    function multicall(bytes[] calldata calls) external {
+        for (uint256 i; i < calls.length; ++i) {
+            (bool success, bytes memory result) = SELF.delegatecall(calls[i]);
+            if (!success) {
+                if (result.length == 0) revert("LZL2Spell/multicall-failed");
+                assembly ("memory-safe") {
+                    revert(add(32, result), mload(result))
+                }
+            }
+        }
     }
 
 }
