@@ -280,4 +280,52 @@ contract LZInitRelayTest is Test {
         assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
     }
 
+    function test_relayMulticall() public {
+        bridge.destination.selectFork();
+
+        bytes[] memory failing = new bytes[](1);
+        failing[0] = abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(l2Spell)));
+        l2Spell.multicall(failing);
+
+        bytes[] memory junk = new bytes[](1);
+        junk[0] = abi.encodeWithSignature("junk()");
+        vm.expectRevert("LZL2Spell/multicall-failed");
+        l2Spell.multicall(junk);
+
+        address oftOwner = OFTAdapterLike(AVAX_USDS_OFT).owner();
+        vm.prank(oftOwner);
+        SkyOFTLike(AVAX_USDS_OFT).setPauser(address(this), true);
+        SkyOFTLike(AVAX_USDS_OFT).pause();
+        assertTrue(OFTAdapterLike(AVAX_USDS_OFT).paused());
+
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, 1 days);
+        assertEq(ibLimit,  5_000_000e18);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, 1 days);
+        assertEq(obLimit,  5_000_000e18);
+
+        RateLimits memory rl = RateLimits({
+            inboundWindow:  2 days,
+            inboundLimit:   1_000_000e18,
+            outboundWindow: 2 days + 1,
+            outboundLimit:  1_000_000e18 + 1
+        });
+
+        bytes[] memory calls = new bytes[](2);
+        calls[0] = abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, rl));
+        calls[1] = abi.encodeCall(LZL2Spell.unpauseOft,       (AVAX_USDS_OFT));
+
+        _relaySpell(abi.encodeCall(LZL2Spell.multicall, (calls)));
+
+        (, ibWindow,, ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, obWindow,, obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
+        assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
+    }
+
 }

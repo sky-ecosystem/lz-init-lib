@@ -21,11 +21,11 @@ This repository provides library functions (`LZInit.sol`) intended to be importe
 
 ## L2 Spell (`LZL2Spell.sol`)
 
-Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, `setUlnConfig`, and `unpauseOft` for remote execution via `relayToL2`.
+Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, `setUlnConfig`, and `unpauseOft` for remote execution via `relayToL2`, plus `multicall` to bundle several of these into a single relayed message.
 
 ## Disclaimer: ordering of relayed calls
 
-Given LZ does not guarantee the execution order of relayed calls, if a spell has more than one relayed call and order matters for safety, consider splitting the work across multiple spells.
+LZ does not guarantee the execution order of relayed messages. If a spell relays more than one message and order matters for safety, bundle the L2-side work into a single message via `LZL2Spell.multicall` and/or split the work across multiple spells.
 
 ## Use Cases
 
@@ -42,6 +42,14 @@ If USDS OFTs on L1 and Avalanche have been paused, a spell is required to unpaus
 
 - `updateRateLimits(USDS_OFT, AVAX_EID, ...)` for the L1 side
 - `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, ...)))` for the Avalanche side
+
+### Reducing rate limits and unpausing after an emergency pause
+
+Bundle the L2 calls into one relayed message so users can't bridge at the old higher limit between the two L2 ops, in case these get executed out of order:
+
+- `updateRateLimits(USDS_OFT, AVAX_EID, ...)` for the L1 side
+- `unpauseOft(USDS_OFT)` for the L1 side
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.multicall, (calls)))` for the Avalanche side, where `calls = [encodeCall(updateRateLimits, ...), encodeCall(unpauseOft, ...)]`
 
 ### Migrating to a new DVN set
 
