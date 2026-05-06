@@ -17,7 +17,7 @@ This repository provides library functions (`LZInit.sol`) intended to be importe
 
 ### Relay (L1 → L2)
 
-- **`relayToL2`** - Forward an arbitrary call to an `LZL2Spell` on a destination chain via the LZ governance bridge. Spell authors construct `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
+- **`relayToL2`** - Forward an arbitrary call to an `LZL2Spell` on a destination chain via the LZ governance bridge. Spell authors construct `targetData` with `abi.encodeCall(LZL2Spell.x, (...))`.
 
 ## L2 Spell (`LZL2Spell.sol`)
 
@@ -36,12 +36,12 @@ The use cases below assume Avalanche and Plasma each have USDS and sUSDS OFTs wi
 If USDS OFTs on L1 and Avalanche have been paused, a spell is required to unpause them:
 
 - `unpauseOft(USDS_OFT)` for the L1 side
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.unpauseOft, (AVAX_USDS_OFT)))` for the Avalanche OFT
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT)))` for the Avalanche OFT
 
 ### Increasing rate limits
 
 - `updateRateLimits(USDS_OFT, AVAX_EID, ...)` for the L1 side
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, ...)))` for the Avalanche side
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, ...)))` for the Avalanche side
 
 ### Migrating to a new DVN set
 
@@ -52,14 +52,14 @@ For simplicity we assume the new DVN set is a superset of the old required set.
 Spell 1 (update sending sides):
 
 - `setUlnConfig(USDS_OFT, AVAX_EID, ETH_SEND_LIB, newUlnCfg)` - L1 send (Eth→Avax)
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_SEND_LIB, newUlnCfg)))` - L2 send (Avax→Eth)
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_SEND_LIB, newUlnCfg)))` - L2 send (Avax→Eth)
 
 (wait long enough for any old-signed in-flight messages to settle against the still-old receive side)
 
 Spell 2 (update receiving sides):
 
 - `setUlnConfig(USDS_OFT, AVAX_EID, ETH_RECV_LIB, newUlnCfg)` - L1 receive (Avax→Eth)
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
 
 #### Governance bridge
 
@@ -67,7 +67,7 @@ A quirk in LZ's off-chain DVN tooling makes the single-spell form fail in practi
 
 Spell 1 (update receive side):
 
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.setUlnConfig, (AVAX_GOV_RECEIVER, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.setUlnConfig, (AVAX_GOV_RECEIVER, ETH_EID, AVAX_RECV_LIB, newUlnCfg)))` - L2 receive (Eth→Avax)
 
 (wait for the L2 update to land; halt gov bridge messaging until Spell 2 executes)
 
@@ -80,16 +80,16 @@ Spell 2 (update send side):
 If sUSDS OFTs on L1 and Avalanche have been wired together and had their ownership and LZ delegate transferred to Sky, but their rate limits are still 0, a spell is required to activate them:
 
 - `activateOft(SUSDS_OFT, AVAX_EID, ...)` - activate the L1 side
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.activateOft, (AVAX_SUSDS_OFT, ...)))` - activate the Avalanche side
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.activateOft, (AVAX_SUSDS_OFT, ...)))` - activate the Avalanche side
 
 ### Wiring two existing remotes together
 
 If two EVM remotes (e.g. Avalanche and Plasma) are each wired to L1 for USDS and sUSDS but not to one another, an L1 spell is required to wire them together:
 
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's USDS to Plasma
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's sUSDS to Plasma
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, AVAX_EID, ...)))` - wire Plasma's USDS to Avalanche
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, AVAX_EID, ...)))` - wire Plasma's sUSDS to Avalanche
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's USDS to Plasma
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_SUSDS_OFT, PLASMA_EID, ...)))` - wire Avalanche's sUSDS to Plasma
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, AVAX_EID, ...)))` - wire Plasma's USDS to Avalanche
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, AVAX_EID, ...)))` - wire Plasma's sUSDS to Avalanche
 
 ### Expanding SkyLink to a new chain
 
@@ -98,10 +98,10 @@ To add Base as a new remote for both USDS and sUSDS, after the deployer has depl
 - `wireGovPeer(BASE_EID, ...)` - add Base as a destination for `LZ_GOV_SENDER`
 - `wireOftPeer(USDS_OFT, BASE_EID, ...)` - connect L1 USDS to Base
 - `wireOftPeer(SUSDS_OFT, BASE_EID, ...)` - connect L1 sUSDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, ...)))` - wire Avalanche USDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)))` - wire Avalanche sUSDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)))` - wire Plasma USDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2SpellLike.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)))` - wire Plasma sUSDS to Base
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, ...)))` - wire Avalanche USDS to Base
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)))` - wire Avalanche sUSDS to Base
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)))` - wire Plasma USDS to Base
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)))` - wire Plasma sUSDS to Base
 
 ## Build
 

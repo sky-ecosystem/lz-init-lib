@@ -101,22 +101,6 @@ interface L1GovernanceRelayLike {
     ) external payable;
 }
 
-interface LZL2SpellLike {
-    function wireOftPeer(address oft, uint32 remoteEid, OftConfig memory cfg, RateLimits memory rateLimits) external;
-    function activateOft(
-        address           oft,
-        uint32            remoteEid,
-        OftConfig  memory cfg,
-        RateLimits memory rateLimits,
-        uint8             rlAccountingType,
-        address           token,
-        address           owner
-    ) external;
-    function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) external;
-    function setUlnConfig(address oapp, uint32 remoteEid, address lib, UlnConfig memory ulnCfg) external;
-    function unpauseOft(address oft) external;
-}
-
 interface OFTAdapterLike is OAppLike {
     function setRateLimits(RateLimitConfig[] calldata inbound, RateLimitConfig[] calldata outbound) external;
     function setEnforcedOptions(EnforcedOptionParam[] calldata opts) external;
@@ -244,7 +228,7 @@ library LZInit {
 
     /// @notice Relay an arbitrary call to an LZL2Spell on a destination chain
     ///         via the LZ governance bridge. Spell authors construct
-    ///         `targetData` with `abi.encodeCall(LZL2SpellLike.x, (...))`.
+    ///         `targetData` with `abi.encodeCall(LZL2Spell.x, (...))`.
     /// @dev    L1-only. LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER
     ///         for (remoteEid, l2GovRelay). LZL2Spell must be deployed on the
     ///         destination chain.
