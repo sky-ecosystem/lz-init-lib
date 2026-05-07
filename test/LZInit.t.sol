@@ -163,6 +163,16 @@ contract LZInitTest is Test {
     //  wireOftPeer
     // ==================================
 
+    // External helper for vm.expectRevert (LZInit functions are internal/inlined)
+    function callWireOftPeer(
+        address           oft,
+        uint32            remoteEid,
+        OftConfig  memory cfg,
+        RateLimits memory rateLimits
+    ) external {
+        LZInit.wireOftPeer(oft, remoteEid, cfg, rateLimits);
+    }
+
     function test_wireOftPeer() public {
         OftConfig memory cfg = OftConfig({
             peer:       oftPeer,
@@ -179,6 +189,10 @@ contract LZInitTest is Test {
             outboundWindow: 1 days + 1,
             outboundLimit:  5_000_000e18 + 1
         });
+
+        // Already-wired peer (USDS_OFT is wired to AVAX_EID at the pinned block).
+        vm.expectRevert("LZInit/already-wired");
+        this.callWireOftPeer(USDS_OFT, AVAX_EID, cfg, rl);
 
         vm.startPrank(PAUSE_PROXY);
         LZInit.wireOftPeer(USDS_OFT, DST_EID, cfg, rl);

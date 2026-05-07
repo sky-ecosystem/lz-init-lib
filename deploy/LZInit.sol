@@ -169,7 +169,7 @@ library LZInit {
     /// @notice Connect a local OFT adapter to a new remote peer. The remote
     ///         OFT adapter must have been pre-configured by the deployer and
     ///         its ownership transferred to the L2GovernanceRelay beforehand.
-    /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
+    /// @dev    Fresh-wire only. Also usable on L2 via LZL2Spell + relayToL2.
     function wireOftPeer(
         address           oft,
         uint32            remoteEid,
@@ -177,6 +177,8 @@ library LZInit {
         RateLimits memory rateLimits
     ) internal {
         address endpoint = OAppLike(oft).endpoint();
+
+        require(OAppLike(oft).peers(remoteEid) == bytes32(0), "LZInit/already-wired");
 
         _wireSend({
             endpoint:     endpoint,
