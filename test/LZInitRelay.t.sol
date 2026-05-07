@@ -9,7 +9,6 @@ import {
     ExecutorConfig,
     OftConfig,
     RateLimits,
-    MessagingFee,
     EndpointLike,
     OAppLike,
     OFTAdapterLike
@@ -23,21 +22,6 @@ import { OptionsBuilder }        from "layerzerolabs/oapp-evm/contracts/oapp/lib
 
 interface ChainlogReadLike {
     function getAddress(bytes32) external view returns (address);
-}
-
-struct TxParams {
-    uint32  dstEid;
-    bytes32 dstTarget;
-    bytes   dstCallData;
-    bytes   extraOptions;
-}
-
-interface GovSenderLike {
-    function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
-}
-
-interface L2GovernanceRelayLike {
-    function relay(address target, bytes calldata targetData) external;
 }
 
 interface SkyOFTLike {
@@ -55,6 +39,7 @@ contract LZInitRelayTest is Test {
 
     address PAUSE_PROXY;
     address GOV_SENDER;
+    address GOV_RELAY;
     address AVAX_GOV_RECEIVER;
     address AVAX_USDS_OFT;
 
@@ -82,6 +67,7 @@ contract LZInitRelayTest is Test {
         mainnet     = getChain("mainnet").createSelectFork(24871363);
         PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
         GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
+        GOV_RELAY   = chainlog.getAddress("LZ_GOV_RELAY");
 
         AVAX_GOV_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
         AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
@@ -97,23 +83,15 @@ contract LZInitRelayTest is Test {
     function _relaySpell(bytes memory spellCallData) internal {
         mainnet.selectFork();
 
-        MessagingFee memory fee = GovSenderLike(GOV_SENDER).quoteTx(TxParams({
-            dstEid:       AVAX_EID,
-            dstTarget:    bytes32(uint256(uint160(AVAX_L2_GOV_RELAY))),
-            dstCallData:  abi.encodeCall(L2GovernanceRelayLike.relay, (address(l2Spell), spellCallData)),
-            extraOptions: OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0)
-        }), false);
-
-        vm.deal(PAUSE_PROXY, fee.nativeFee);
+        vm.deal(GOV_RELAY, 1 ether);
         vm.startPrank(PAUSE_PROXY);
         LZInit.relayToL2(
             AVAX_EID,
             AVAX_L2_GOV_RELAY,
             address(l2Spell),
             spellCallData,
-            OptionsBuilder.newOptions().addExecutorLzReceiveOption(500_000, 0),
-            fee,
-            PAUSE_PROXY
+            500_000,    // gas for L2 lzReceive
+            1 ether     // maxFee
         );
         vm.stopPrank();
 
@@ -326,6 +304,59 @@ contract LZInitRelayTest is Test {
         assertEq(obWindow, rl.outboundWindow);
         assertEq(obLimit,  rl.outboundLimit);
         assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
+    }
+
+    // External helper for vm.expectRevert (LZInit functions are internal/inlined).
+    function callRelayToL2(
+        uint32        remoteEid,
+        address       l2GovRelay,
+        address       l2Spell_,
+        bytes  memory targetData,
+        uint128       gas,
+        uint256       maxFee
+    ) external {
+        LZInit.relayToL2(remoteEid, l2GovRelay, l2Spell_, targetData, gas, maxFee);
+    }
+
+    function test_relayGuards() public {
+        mainnet.selectFork();
+
+        address endpoint = OAppLike(GOV_SENDER).endpoint();
+        address sendLib  = EndpointLike(endpoint).getSendLibrary(GOV_SENDER, AVAX_EID);
+        bytes4  quoteSelector = bytes4(keccak256(
+            "quote((uint64,uint32,address,uint32,bytes32,bytes32,bytes),bytes,bool)"
+        ));
+        bytes memory targetData = abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT));
+
+        // --- (1) lzTokenFee > 0 → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.001 ether), uint256(1))  // (nativeFee, lzTokenFee)
+        );
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert("LZInit/lz-token-fee-nonzero");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 1 ether);
+
+        // --- (2) fee.nativeFee > maxFee → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.5 ether), uint256(0))
+        );
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert("LZInit/fee-exceeds-max");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 0.1 ether);
+
+        // --- (3) relay.balance < fee.nativeFee → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.05 ether), uint256(0))
+        );
+        vm.deal(GOV_RELAY, 0.01 ether);
+        vm.expectRevert("LZInit/insufficient-relay-balance");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 1 ether);
     }
 
 }

@@ -45,6 +45,13 @@ struct MessagingFee {
     uint256 lzTokenFee;
 }
 
+struct TxParams {
+    uint32  dstEid;
+    bytes32 dstTarget;
+    bytes   dstCallData;
+    bytes   extraOptions;
+}
+
 // Note: DVN arrays in `sendUlnCfg` must be strictly ascending by address.
 struct GovConfig {
     address        peer;
@@ -87,6 +94,11 @@ interface OAppLike {
 
 interface GovOAppSenderLike is OAppLike {
     function setCanCallTarget(address srcSender, uint32 dstEid, bytes32 dstTarget, bool canCall) external;
+    function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
+}
+
+interface L2GovernanceRelayLike {
+    function relay(address target, bytes calldata targetData) external;
 }
 
 interface L1GovernanceRelayLike {
@@ -136,14 +148,22 @@ library LZInit {
     function wireGovPeer(uint32 remoteEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
-        _wireSend(OAppLike(govOappSender).endpoint(), govOappSender, remoteEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
+        _wireSend({
+            endpoint:     OAppLike(govOappSender).endpoint(),
+            oappSender:   govOappSender,
+            remoteEid:    remoteEid,
+            oappReceiver: cfg.peer,
+            sendLib:      cfg.sendLib,
+            execCfg:      cfg.execCfg,
+            sendUlnCfg:   cfg.sendUlnCfg
+        });
 
-        GovOAppSenderLike(govOappSender).setCanCallTarget(
-            chainlog.getAddress("LZ_GOV_RELAY"),
-            remoteEid,
-            bytes32(uint256(uint160(cfg.l2GovRelay))),
-            true
-        );
+        GovOAppSenderLike(govOappSender).setCanCallTarget({
+            srcSender: chainlog.getAddress("LZ_GOV_RELAY"),
+            dstEid:    remoteEid,
+            dstTarget: bytes32(uint256(uint160(cfg.l2GovRelay))),
+            canCall:   true
+        });
     }
 
     /// @notice Connect a local OFT adapter to a new remote peer. The remote
@@ -158,9 +178,22 @@ library LZInit {
     ) internal {
         address endpoint = OAppLike(oft).endpoint();
 
-        _wireSend(endpoint, oft, remoteEid, cfg.peer, cfg.sendLib, cfg.execCfg, cfg.sendUlnCfg);
+        _wireSend({
+            endpoint:     endpoint,
+            oappSender:   oft,
+            remoteEid:    remoteEid,
+            oappReceiver: cfg.peer,
+            sendLib:      cfg.sendLib,
+            execCfg:      cfg.execCfg,
+            sendUlnCfg:   cfg.sendUlnCfg
+        });
 
-        EndpointLike(endpoint).setReceiveLibrary(oft, remoteEid, cfg.recvLib, 0);
+        EndpointLike(endpoint).setReceiveLibrary({
+            oapp:        oft,
+            eid:         remoteEid,
+            newLib:      cfg.recvLib,
+            gracePeriod: 0
+        });
 
         SetConfigParam[] memory recvParams = new SetConfigParam[](1);
         recvParams[0] = SetConfigParam(remoteEid, ULN_CONFIG_TYPE, abi.encode(cfg.recvUlnCfg));
@@ -226,24 +259,46 @@ library LZInit {
     //  Relay (L1 → L2)
     // ==================================
 
-    /// @notice Relay an arbitrary call to an LZL2Spell on a destination chain
-    ///         via the LZ governance bridge. Spell authors construct
-    ///         `targetData` with `abi.encodeCall(LZL2Spell.x, (...))`.
-    /// @dev    L1-only. LZ_GOV_RELAY must be whitelisted on LZ_GOV_SENDER
-    ///         for (remoteEid, l2GovRelay). LZL2Spell must be deployed on the
-    ///         destination chain.
+    /// @notice Relay an arbitrary call to an LZL2Spell on a destination chain.
+    /// @dev    L1-only. LZ_GOV_RELAY must be:
+    ///         - whitelisted on LZ_GOV_SENDER for (remoteEid, l2GovRelay), and
+    ///         - pre-funded with at least the quoted `fee.nativeFee`.
+    ///         LZL2Spell must be deployed on the destination chain.
     function relayToL2(
-        uint32              remoteEid,
-        address             l2GovRelay,
-        address             l2Spell,
-        bytes        memory targetData,
-        bytes        memory extraOptions,
-        MessagingFee memory fee,
-        address             refundAddress
+        uint32        remoteEid,
+        address       l2GovRelay,
+        address       l2Spell,
+        bytes  memory targetData,
+        uint128       gas,
+        uint256       maxFee
     ) internal {
-        L1GovernanceRelayLike(chainlog.getAddress("LZ_GOV_RELAY")).relayEVM{value: fee.nativeFee}(
-            remoteEid, l2GovRelay, l2Spell, targetData, extraOptions, fee, refundAddress
-        );
+        address relay = chainlog.getAddress("LZ_GOV_RELAY");
+
+        bytes memory extraOptions = _encodeLzReceiveOptions(gas);
+
+        MessagingFee memory fee = GovOAppSenderLike(chainlog.getAddress("LZ_GOV_SENDER")).quoteTx({
+            params: TxParams({
+                dstEid:       remoteEid,
+                dstTarget:    bytes32(uint256(uint160(l2GovRelay))),
+                dstCallData:  abi.encodeCall(L2GovernanceRelayLike.relay, (l2Spell, targetData)),
+                extraOptions: extraOptions
+            }),
+            payInLzToken: false
+        });
+
+        require(fee.lzTokenFee == 0,            "LZInit/lz-token-fee-nonzero");
+        require(fee.nativeFee <= maxFee,        "LZInit/fee-exceeds-max");
+        require(relay.balance >= fee.nativeFee, "LZInit/insufficient-relay-balance");
+
+        L1GovernanceRelayLike(relay).relayEVM({
+            dstEid:            remoteEid,
+            l2GovernanceRelay: l2GovRelay,
+            target:            l2Spell,
+            targetData:        targetData,
+            extraOptions:      extraOptions,
+            fee:               fee,
+            refundAddress:     relay
+        });
     }
 
     // --- Private helpers ---
