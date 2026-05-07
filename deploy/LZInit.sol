@@ -21,10 +21,9 @@ struct ExecutorConfig {
     address executor;
 }
 
-struct RateLimitConfig {
-    uint32  eid;
-    uint48  window;
-    uint256 limit;
+struct MessagingFee {
+    uint256 nativeFee;
+    uint256 lzTokenFee;
 }
 
 struct EnforcedOptionParam {
@@ -33,23 +32,24 @@ struct EnforcedOptionParam {
     bytes  options;
 }
 
-struct RateLimits {
-    uint48  inboundWindow;
-    uint256 inboundLimit;
-    uint48  outboundWindow;
-    uint256 outboundLimit;
-}
-
-struct MessagingFee {
-    uint256 nativeFee;
-    uint256 lzTokenFee;
-}
-
 struct TxParams {
     uint32  dstEid;
     bytes32 dstTarget;
     bytes   dstCallData;
     bytes   extraOptions;
+}
+
+struct RateLimitConfig {
+    uint32  eid;
+    uint48  window;
+    uint256 limit;
+}
+
+struct RateLimits {
+    uint48  inboundWindow;
+    uint256 inboundLimit;
+    uint48  outboundWindow;
+    uint256 outboundLimit;
 }
 
 // Note: DVN arrays in `sendUlnCfg` must be strictly ascending by address.
@@ -70,10 +70,6 @@ struct OftConfig {
     address        recvLib;
     UlnConfig      recvUlnCfg;
     uint128        optionsGas;
-}
-
-interface ChainlogLike {
-    function getAddress(bytes32) external view returns (address);
 }
 
 interface EndpointLike {
@@ -97,10 +93,6 @@ interface GovOAppSenderLike is OAppLike {
     function quoteTx(TxParams calldata params, bool payInLzToken) external view returns (MessagingFee memory);
 }
 
-interface L2GovernanceRelayLike {
-    function relay(address target, bytes calldata targetData) external;
-}
-
 interface L1GovernanceRelayLike {
     function relayEVM(
         uint32                dstEid,
@@ -111,6 +103,10 @@ interface L1GovernanceRelayLike {
         MessagingFee calldata fee,
         address               refundAddress
     ) external payable;
+}
+
+interface L2GovernanceRelayLike {
+    function relay(address target, bytes calldata targetData) external;
 }
 
 interface OFTAdapterLike is OAppLike {
@@ -124,6 +120,10 @@ interface OFTAdapterLike is OAppLike {
     function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function rateLimitAccountingType() external view returns (uint8);
     function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
+}
+
+interface ChainlogLike {
+    function getAddress(bytes32) external view returns (address);
 }
 
 library LZInit {
