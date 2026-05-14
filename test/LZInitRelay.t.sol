@@ -10,6 +10,7 @@ import {
     OftConfig,
     RateLimits,
     EndpointLike,
+    UlnLike,
     OAppLike,
     OFTAdapterLike
 } from "deploy/LZInit.sol";
@@ -151,8 +152,8 @@ contract LZInitRelayTest is Test {
         cfg.sendLib    = EndpointLike(AVAX_ENDPOINT).getSendLibrary(avaxSusdsOft, ETH_EID);
         (cfg.recvLib,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(avaxSusdsOft, ETH_EID);
         cfg.execCfg    = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, cfg.sendLib, ETH_EID, 1), (ExecutorConfig));
-        cfg.sendUlnCfg = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, cfg.sendLib, ETH_EID, 2), (UlnConfig));
-        cfg.recvUlnCfg = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, cfg.recvLib, ETH_EID, 2), (UlnConfig));
+        cfg.sendUlnCfg = UlnLike(cfg.sendLib).getAppUlnConfig(avaxSusdsOft, ETH_EID);
+        cfg.recvUlnCfg = UlnLike(cfg.recvLib).getAppUlnConfig(avaxSusdsOft, ETH_EID);
         cfg.optionsGas = 130_000;
 
         uint8   rlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();

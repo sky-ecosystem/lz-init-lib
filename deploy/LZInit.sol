@@ -78,8 +78,14 @@ interface EndpointLike {
     function setConfig(address oapp, address lib, SetConfigParam[] calldata params) external;
     function delegates(address oapp) external view returns (address);
     function getSendLibrary(address oapp, uint32 eid) external view returns (address);
+    function isDefaultSendLibrary(address sender, uint32 dstEid) external view returns (bool);
     function getReceiveLibrary(address oapp, uint32 eid) external view returns (address, bool);
+    function receiveLibraryTimeout(address oapp, uint32 eid) external view returns (address lib);
     function getConfig(address oapp, address lib, uint32 eid, uint32 configType) external view returns (bytes memory);
+}
+
+interface UlnLike {
+    function getAppUlnConfig(address oapp, uint32 eid) external view returns (UlnConfig memory);
 }
 
 interface OAppLike {
@@ -120,6 +126,9 @@ interface OFTAdapterLike is OAppLike {
     function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function rateLimitAccountingType() external view returns (uint8);
     function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
+    function defaultFeeBps() external view returns (uint16);
+    function feeBps(uint32 eid) external view returns (uint16, bool);
+    function msgInspector() external view returns (address);
 }
 
 interface ChainlogLike {
@@ -351,19 +360,42 @@ library LZInit {
         require(oft_.token()                   == token,                               "LZInit/token-mismatch");
         require(oft_.owner()                   == owner,                               "LZInit/owner-mismatch");
         require(ep.delegates(oft)              == owner,                               "LZInit/delegate-mismatch");
+        require(oft_.msgInspector()            == address(0),                          "LZInit/msg-inspector-nonzero");
 
-        (,,, uint256 outLimit) = oft_.outboundRateLimits(remoteEid);
-        (,,, uint256 inLimit)  = oft_.inboundRateLimits(remoteEid);
-        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
-        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
+        {
+            (uint16 feeBps, bool feeEnabled) = oft_.feeBps(remoteEid);
+            require(oft_.defaultFeeBps() == 0,                "LZInit/default-fee-nonzero");
+            require(feeBps               == 0 && !feeEnabled, "LZInit/fee-nonzero");
+        }
+
+        {
+            (,,, uint256 outLimit) = oft_.outboundRateLimits(remoteEid);
+            (,,, uint256 inLimit)  = oft_.inboundRateLimits(remoteEid);
+            require(outLimit == 0, "LZInit/outbound-rl-nonzero");
+            require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
+        }
 
         require(ep.getSendLibrary(oft, remoteEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
-        (address recvLib,) = ep.getReceiveLibrary(oft, remoteEid);
+        require(!ep.isDefaultSendLibrary(oft, remoteEid),         "LZInit/send-lib-default");
+        (address recvLib, bool isDefaultRecv) = ep.getReceiveLibrary(oft, remoteEid);
         require(recvLib == cfg.recvLib, "LZInit/recv-lib-mismatch");
+        require(!isDefaultRecv,         "LZInit/recv-lib-default");
 
-        require(keccak256(ep.getConfig(oft, cfg.sendLib, remoteEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)),    "LZInit/exec-cfg-mismatch");
-        require(keccak256(ep.getConfig(oft, cfg.sendLib, remoteEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
-        require(keccak256(ep.getConfig(oft, cfg.recvLib, remoteEid, ULN_CONFIG_TYPE))      == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
+        require(ep.receiveLibraryTimeout(oft, remoteEid) == address(0), "LZInit/recv-lib-timeout-active");
+
+        require(keccak256(ep.getConfig(oft, cfg.sendLib, remoteEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)), "LZInit/exec-cfg-mismatch");
+
+        // Note: `optionalDVNCount`/`optionalDVNThreshold` are not asserted non-zero (historical Sky
+        // adapters were deployed with these at 0). Spell authors should sanity-check them explicitly if needed.
+        UlnConfig memory sendUln = UlnLike(cfg.sendLib).getAppUlnConfig(oft, remoteEid);
+        require(keccak256(abi.encode(sendUln)) == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
+        require(sendUln.confirmations    != 0, "LZInit/send-uln-conf-default");
+        require(sendUln.requiredDVNCount != 0, "LZInit/send-uln-req-default");
+
+        UlnConfig memory recvUln = UlnLike(cfg.recvLib).getAppUlnConfig(oft, remoteEid);
+        require(keccak256(abi.encode(recvUln)) == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
+        require(recvUln.confirmations    != 0, "LZInit/recv-uln-conf-default");
+        require(recvUln.requiredDVNCount != 0, "LZInit/recv-uln-req-default");
 
         bytes memory expectedOptions = _encodeLzReceiveOptions(cfg.optionsGas);
         require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
