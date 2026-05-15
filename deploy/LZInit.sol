@@ -354,7 +354,7 @@ library LZInit {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
         EndpointLike   ep   = EndpointLike(oft_.endpoint());
 
-        require(oft_.peers(remoteEid)             == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
+        require(oft_.peers(remoteEid)          == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
         require(!oft_.paused(),                                                        "LZInit/paused");
         require(oft_.rateLimitAccountingType() == rlAccountingType,                    "LZInit/rl-accounting-mismatch");
         require(oft_.token()                   == token,                               "LZInit/token-mismatch");
