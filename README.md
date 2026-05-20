@@ -27,9 +27,11 @@ Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPee
 
 LZ does not guarantee the execution order of relayed messages. If a spell relays more than one message and order matters for safety, bundle the L2-side work into a single message via `LZL2Spell.multicall` and/or split the work across multiple spells.
 
-## Use Cases
+## Illustrative Examples
 
-The use cases below assume Avalanche and Plasma each have USDS and sUSDS OFTs wired to L1, but not to each other.
+> **Disclaimer:** the examples below are illustrative and intended to help understand the structure of the library; they are not definitive templates. They generally assume simplified preconditions for conciseness and no guarantee is made that any is suitable as-is. Each scenario should be carefully analysed against the actual on-chain state and the specifics of the change being made; depending on those, the required sequencing may differ and/or additional safeguards beyond what's shown may be needed.
+
+The examples below assume Avalanche and Plasma each have USDS and sUSDS OFTs wired to L1, but not to each other.
 
 ### Unpausing OFTs after an emergency pause
 
@@ -55,7 +57,7 @@ Bundle the L2 calls into one relayed message so users can't bridge at the old hi
 
 #### OFT bridge
 
-For simplicity we assume the new DVN set is a superset of the old required set.
+For simplicity we assume the new DVN set is a superset of the old required set. Otherwise, messages sent during the wait window between Spell 1 and Spell 2 may not be verifiable on the receive side and could be stuck — a different sequence would be required.
 
 Spell 1 (update sending sides):
 
