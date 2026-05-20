@@ -1,0 +1,363 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity ^0.8.22;
+
+import "forge-std/Test.sol";
+
+import {
+    LZInit,
+    UlnConfig,
+    ExecutorConfig,
+    OftConfig,
+    RateLimits,
+    EndpointLike,
+    UlnLike,
+    OAppLike,
+    OFTAdapterLike
+} from "deploy/LZInit.sol";
+import { LZL2Spell } from "deploy/LZL2Spell.sol";
+
+import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
+import { Domain, DomainHelpers } from "xchain-helpers/testing/Domain.sol";
+import { LZBridgeTesting }       from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
+import { OptionsBuilder }        from "layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+
+interface ChainlogReadLike {
+    function getAddress(bytes32) external view returns (address);
+}
+
+interface SkyOFTLike {
+    function pause() external;
+    function setPauser(address pauser, bool canPause) external;
+}
+
+contract LZInitRelayTest is Test {
+
+    using DomainHelpers   for *;
+    using LZBridgeTesting for *;
+    using OptionsBuilder  for bytes;
+
+    ChainlogReadLike constant chainlog = ChainlogReadLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
+
+    address PAUSE_PROXY;
+    address GOV_SENDER;
+    address GOV_RELAY;
+    address AVAX_GOV_RECEIVER;
+    address AVAX_USDS_OFT;
+
+    // --- Avalanche (existing deployment, not resolvable from mainnet) ---
+    address constant AVAX_ENDPOINT          = 0x1a44076050125825900e736c501f859c50fE728c;
+    address constant AVAX_L2_GOV_RELAY      = 0xe928885BCe799Ed933651715608155F01abA23cA;
+    address constant AVAX_SEND_LIB          = 0x197D1333DEA5Fe0D6600E9b396c7f1B1cFCc558a;
+    address constant AVAX_RECV_LIB          = 0xbf3521d309642FA9B1c91A08609505BA09752c61;
+    address constant AVAX_EXECUTOR          = 0x90E595783E43eb89fF07f63d27B8430e6B44bD9c;
+    address constant AVAX_DVN_HORIZEN       = 0x07C05EaB7716AcB6f83ebF6268F8EECDA8892Ba1;
+    address constant AVAX_DVN_LZ_LABS       = 0x962F502A63F5FBeB44DC9ab932122648E8352959;
+    address constant AVAX_DVN_NETHERMIND    = 0xa59BA433ac34D2927232918Ef5B2eaAfcF130BA5;
+    address constant AVAX_DVN_CANARY        = 0xcC49E6fca014c77E1Eb604351cc1E08C84511760;
+
+    uint32 constant ETH_EID  = 30101;
+    uint32 constant BASE_EID = 30184;
+    uint32 constant AVAX_EID = 30106;
+
+    Domain    mainnet;
+    Bridge    bridge;
+    LZL2Spell l2Spell;
+
+    function setUp() public {
+        // Pinned to the block where SUSDS_OFT was configured for Avalanche, still with 0 rate limits.
+        mainnet     = getChain("mainnet").createSelectFork(24871363);
+        PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
+        GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
+        GOV_RELAY   = chainlog.getAddress("LZ_GOV_RELAY");
+
+        AVAX_GOV_RECEIVER = address(uint160(uint256(OAppLike(GOV_SENDER).peers(AVAX_EID))));
+        AVAX_USDS_OFT = address(uint160(uint256(OFTAdapterLike(chainlog.getAddress("USDS_OFT")).peers(AVAX_EID))));
+
+        // Pinned to the block where sUSDS's remote OFT was configured on Avalanche, still with 0 rate limits.
+        Domain memory avalanche = getChain("avalanche").createFork(83293000);
+        bridge = LZBridgeTesting.createLZBridge(mainnet, avalanche);
+
+        bridge.destination.selectFork();
+        l2Spell = new LZL2Spell();
+    }
+
+    function _relaySpell(bytes memory spellCallData) internal {
+        mainnet.selectFork();
+
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.startPrank(PAUSE_PROXY);
+        LZInit.relayToL2(
+            AVAX_EID,
+            AVAX_L2_GOV_RELAY,
+            address(l2Spell),
+            spellCallData,
+            500_000,    // gas for L2 lzReceive
+            1 ether     // maxFee
+        );
+        vm.stopPrank();
+
+        bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
+    }
+
+    function test_relayWireOftPeer() public {
+        address[] memory avaxDVNs = new address[](2);
+        avaxDVNs[0] = AVAX_DVN_LZ_LABS;
+        avaxDVNs[1] = AVAX_DVN_NETHERMIND;
+
+        OftConfig memory cfg = OftConfig({
+            peer:       makeAddr("peer"),
+            sendLib:    AVAX_SEND_LIB,
+            execCfg:    ExecutorConfig({ maxMessageSize: 10000, executor: AVAX_EXECUTOR }),
+            sendUlnCfg: UlnConfig({ confirmations: 12, requiredDVNCount: 2, optionalDVNCount: 0, optionalDVNThreshold: 0, requiredDVNs: avaxDVNs, optionalDVNs: new address[](0) }),
+            recvLib:    AVAX_RECV_LIB,
+            recvUlnCfg: UlnConfig({ confirmations: 15, requiredDVNCount: 2, optionalDVNCount: 0, optionalDVNThreshold: 0, requiredDVNs: avaxDVNs, optionalDVNs: new address[](0) }),
+            optionsGas: 130_000
+        });
+        RateLimits memory rl = RateLimits({
+            inboundWindow:  1 days,
+            inboundLimit:   5_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
+        });
+
+        _relaySpell(abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, cfg, rl)));
+
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).peers(BASE_EID), bytes32(uint256(uint160(cfg.peer))));
+        assertEq(EndpointLike(AVAX_ENDPOINT).getSendLibrary(AVAX_USDS_OFT, BASE_EID), AVAX_SEND_LIB);
+        (address recvLib,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(AVAX_USDS_OFT, BASE_EID);
+        assertEq(recvLib, AVAX_RECV_LIB);
+
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(BASE_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(BASE_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
+
+        bytes memory expectedOpts = OptionsBuilder.newOptions().addExecutorLzReceiveOption(cfg.optionsGas, 0);
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(BASE_EID, 1), expectedOpts);
+        assertEq(OFTAdapterLike(AVAX_USDS_OFT).enforcedOptions(BASE_EID, 2), expectedOpts);
+    }
+
+    function test_relayActivateOft() public {
+        mainnet.selectFork();
+        address ethSusdsOft  = chainlog.getAddress("SUSDS_OFT");
+        address avaxSusdsOft = address(uint160(uint256(OFTAdapterLike(ethSusdsOft).peers(AVAX_EID))));
+
+        bridge.destination.selectFork();
+
+        // Read the full expected config from the Avalanche-side OFT (deployer pre-configured).
+        OftConfig memory cfg;
+        cfg.peer       = address(uint160(uint256(OFTAdapterLike(avaxSusdsOft).peers(ETH_EID))));
+        cfg.sendLib    = EndpointLike(AVAX_ENDPOINT).getSendLibrary(avaxSusdsOft, ETH_EID);
+        (cfg.recvLib,) = EndpointLike(AVAX_ENDPOINT).getReceiveLibrary(avaxSusdsOft, ETH_EID);
+        cfg.execCfg    = abi.decode(EndpointLike(AVAX_ENDPOINT).getConfig(avaxSusdsOft, cfg.sendLib, ETH_EID, 1), (ExecutorConfig));
+        cfg.sendUlnCfg = UlnLike(cfg.sendLib).getAppUlnConfig(avaxSusdsOft, ETH_EID);
+        cfg.recvUlnCfg = UlnLike(cfg.recvLib).getAppUlnConfig(avaxSusdsOft, ETH_EID);
+        cfg.optionsGas = 130_000;
+
+        uint8   rlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
+        address token = OFTAdapterLike(avaxSusdsOft).token();
+        address owner = OFTAdapterLike(avaxSusdsOft).owner();
+
+        RateLimits memory rl = RateLimits({
+            inboundWindow:  1 days,
+            inboundLimit:   5_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  5_000_000e18 + 1
+        });
+
+        _relaySpell(abi.encodeCall(
+            LZL2Spell.activateOft,
+            (avaxSusdsOft, ETH_EID, cfg, rl, rlAt, token, owner)
+        ));
+
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(avaxSusdsOft).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
+    }
+
+    function test_relayUpdateRateLimits() public {
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, 1 days);
+        assertEq(ibLimit,  5_000_000e18);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, 1 days);
+        assertEq(obLimit,  5_000_000e18);
+
+        RateLimits memory rl = RateLimits({
+            inboundWindow:  1 days,
+            inboundLimit:   10_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  10_000_000e18 + 1
+        });
+
+        _relaySpell(abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, rl)));
+
+        (, ibWindow,, ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, obWindow,, obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
+    }
+
+    function test_relaySetUlnConfig() public {
+        UlnConfig memory current = abi.decode(
+            EndpointLike(AVAX_ENDPOINT).getConfig(AVAX_USDS_OFT, AVAX_SEND_LIB, ETH_EID, 2),
+            (UlnConfig)
+        );
+        assertEq(current.confirmations,    12);
+        assertEq(current.requiredDVNCount, 2);
+        assertEq(current.optionalDVNCount, 0);
+
+        // Migrate to a 4-of-4 required DVN set: {Horizen, LZ Labs, Nethermind, Canary} (sorted by address).
+        address[] memory newRequiredDVNs = new address[](4);
+        newRequiredDVNs[0] = AVAX_DVN_HORIZEN;
+        newRequiredDVNs[1] = AVAX_DVN_LZ_LABS;
+        newRequiredDVNs[2] = AVAX_DVN_NETHERMIND;
+        newRequiredDVNs[3] = AVAX_DVN_CANARY;
+
+        UlnConfig memory newCfg = UlnConfig({
+            confirmations:        12,
+            requiredDVNCount:     4,
+            optionalDVNCount:     0,
+            optionalDVNThreshold: 0,
+            requiredDVNs:         newRequiredDVNs,
+            optionalDVNs:         new address[](0)
+        });
+
+        _relaySpell(abi.encodeCall(LZL2Spell.setUlnConfig, (AVAX_USDS_OFT, ETH_EID, AVAX_SEND_LIB, newCfg)));
+
+        UlnConfig memory updated = abi.decode(
+            EndpointLike(AVAX_ENDPOINT).getConfig(AVAX_USDS_OFT, AVAX_SEND_LIB, ETH_EID, 2),
+            (UlnConfig)
+        );
+        assertEq(updated.confirmations,        12);
+        assertEq(updated.requiredDVNCount,     4);
+        assertEq(updated.optionalDVNCount,     0);
+        assertEq(updated.requiredDVNs.length,  4);
+        assertEq(updated.requiredDVNs[0],      AVAX_DVN_HORIZEN);
+        assertEq(updated.requiredDVNs[1],      AVAX_DVN_LZ_LABS);
+        assertEq(updated.requiredDVNs[2],      AVAX_DVN_NETHERMIND);
+        assertEq(updated.requiredDVNs[3],      AVAX_DVN_CANARY);
+    }
+
+    function test_relayUnpauseOft() public {
+        bridge.destination.selectFork();
+        address oftOwner = OFTAdapterLike(AVAX_USDS_OFT).owner();
+        vm.prank(oftOwner);
+        SkyOFTLike(AVAX_USDS_OFT).setPauser(address(this), true);
+        SkyOFTLike(AVAX_USDS_OFT).pause();
+        assertTrue(OFTAdapterLike(AVAX_USDS_OFT).paused());
+
+        _relaySpell(abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT)));
+
+        assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
+    }
+
+    function test_relayMulticall() public {
+        bridge.destination.selectFork();
+
+        bytes[] memory failing = new bytes[](1);
+        failing[0] = abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT));
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", address(l2Spell)));
+        l2Spell.multicall(failing);
+
+        bytes[] memory junk = new bytes[](1);
+        junk[0] = abi.encodeWithSignature("junk()");
+        vm.expectRevert("LZL2Spell/multicall-failed");
+        l2Spell.multicall(junk);
+
+        address oftOwner = OFTAdapterLike(AVAX_USDS_OFT).owner();
+        vm.prank(oftOwner);
+        SkyOFTLike(AVAX_USDS_OFT).setPauser(address(this), true);
+        SkyOFTLike(AVAX_USDS_OFT).pause();
+        assertTrue(OFTAdapterLike(AVAX_USDS_OFT).paused());
+
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, 1 days);
+        assertEq(ibLimit,  5_000_000e18);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, 1 days);
+        assertEq(obLimit,  5_000_000e18);
+
+        RateLimits memory rl = RateLimits({
+            inboundWindow:  2 days,
+            inboundLimit:   1_000_000e18,
+            outboundWindow: 2 days + 1,
+            outboundLimit:  1_000_000e18 + 1
+        });
+
+        bytes[] memory calls = new bytes[](2);
+        calls[0] = abi.encodeCall(LZL2Spell.updateRateLimits, (AVAX_USDS_OFT, ETH_EID, rl));
+        calls[1] = abi.encodeCall(LZL2Spell.unpauseOft,       (AVAX_USDS_OFT));
+
+        _relaySpell(abi.encodeCall(LZL2Spell.multicall, (calls)));
+
+        (, ibWindow,, ibLimit) = OFTAdapterLike(AVAX_USDS_OFT).inboundRateLimits(ETH_EID);
+        assertEq(ibWindow, rl.inboundWindow);
+        assertEq(ibLimit,  rl.inboundLimit);
+        (, obWindow,, obLimit) = OFTAdapterLike(AVAX_USDS_OFT).outboundRateLimits(ETH_EID);
+        assertEq(obWindow, rl.outboundWindow);
+        assertEq(obLimit,  rl.outboundLimit);
+        assertFalse(OFTAdapterLike(AVAX_USDS_OFT).paused());
+    }
+
+    // External helper for vm.expectRevert (LZInit functions are internal/inlined).
+    function callRelayToL2(
+        uint32        remoteEid,
+        address       l2GovRelay,
+        address       l2Spell_,
+        bytes  memory targetData,
+        uint128       gas,
+        uint256       maxFee
+    ) external {
+        LZInit.relayToL2(remoteEid, l2GovRelay, l2Spell_, targetData, gas, maxFee);
+    }
+
+    function test_relayGuards() public {
+        mainnet.selectFork();
+
+        address endpoint = OAppLike(GOV_SENDER).endpoint();
+        address sendLib  = EndpointLike(endpoint).getSendLibrary(GOV_SENDER, AVAX_EID);
+        bytes4  quoteSelector = bytes4(keccak256(
+            "quote((uint64,uint32,address,uint32,bytes32,bytes32,bytes),bytes,bool)"
+        ));
+        bytes memory targetData = abi.encodeCall(LZL2Spell.unpauseOft, (AVAX_USDS_OFT));
+
+        // --- (1) lzTokenFee > 0 → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.001 ether), uint256(1))  // (nativeFee, lzTokenFee)
+        );
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert("LZInit/lz-token-fee-nonzero");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 1 ether);
+
+        // --- (2) fee.nativeFee > maxFee → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.5 ether), uint256(0))
+        );
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert("LZInit/fee-exceeds-max");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 0.1 ether);
+
+        // --- (3) relay.balance < fee.nativeFee → revert ---
+        vm.mockCall(
+            sendLib,
+            abi.encodeWithSelector(quoteSelector),
+            abi.encode(uint256(0.05 ether), uint256(0))
+        );
+        vm.deal(GOV_RELAY, 0.01 ether);
+        vm.expectRevert("LZInit/insufficient-relay-balance");
+        this.callRelayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell), targetData, 500_000, 1 ether);
+    }
+
+}
