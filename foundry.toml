@@ -3,3 +3,8 @@ src = "deploy"
 out = "out"
 libs = ["lib"]
 evm_version = "cancun"
+fs_permissions = [{ access = "read-write", path = "./script" }]
+
+[rpc_endpoints]
+mainnet = "${ETH_RPC_URL}"
+base    = "${BASE_RPC_URL}"
