@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity >=0.8.0;
 
-import { CCIPDVNAdapter }       from "@layerzerolabs/lz-evm-messagelib-v2/contracts/uln/dvn/adapters/CCIP/CCIPDVNAdapter.sol";
-import { CCIPDVNAdapterFeeLib } from "@layerzerolabs/lz-evm-messagelib-v2/contracts/uln/dvn/adapters/CCIP/CCIPDVNAdapterFeeLib.sol";
 import { ICCIPDVNAdapter }      from "@layerzerolabs/lz-evm-messagelib-v2/contracts/uln/interfaces/adapters/ICCIPDVNAdapter.sol";
 import { ICCIPDVNAdapterFeeLib} from "@layerzerolabs/lz-evm-messagelib-v2/contracts/uln/interfaces/adapters/ICCIPDVNAdapterFeeLib.sol";
 import { ReceiveLibParam }      from "@layerzerolabs/lz-evm-messagelib-v2/contracts/uln/dvn/adapters/DVNAdapterBase.sol";
+
+interface CCIPDVNAdapterLike {
+    function setDstConfig    (ICCIPDVNAdapter.DstConfigParam[] calldata) external;
+    function setReceiveLibs  (ReceiveLibParam[] calldata) external;
+    function grantRole       (bytes32 role, address account) external;
+}
+
+interface CCIPDVNAdapterFeeLibLike {
+    function setDstConfig(ICCIPDVNAdapterFeeLib.DstConfigParam[] calldata) external;
+}
 
 struct SetConfigParam {
     uint32 eid;
@@ -294,7 +302,7 @@ library LZInit {
         CCIPDVNRemote memory  remote,
         address[]     memory  allowedOApps
     ) internal {
-        CCIPDVNAdapter a = CCIPDVNAdapter(payable(adapter));
+        CCIPDVNAdapterLike a = CCIPDVNAdapterLike(adapter);
 
         {
             ICCIPDVNAdapter.DstConfigParam[] memory params = new ICCIPDVNAdapter.DstConfigParam[](1);
@@ -327,7 +335,7 @@ library LZInit {
                 dstEid:         remote.remoteEid,
                 floorMarginUSD: remote.floorMarginUSD
             });
-            CCIPDVNAdapterFeeLib(feeLib).setDstConfig(params);
+            CCIPDVNAdapterFeeLibLike(feeLib).setDstConfig(params);
         }
 
         // First grantRole(ALLOWLIST, _) flips allowlistSize > 0 and makes the
