@@ -29,6 +29,7 @@ import { Domain, DomainHelpers } from "xchain-helpers/testing/Domain.sol";
 import { LZBridgeTesting }       from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
 
 interface ChainlogReadLike { function getAddress(bytes32) external view returns (address); }
+interface ChainlogSetLike  { function setAddress(bytes32, address) external; }
 interface WardsLike        { function wards(address) external view returns (uint256); }
 interface TokenLike        { function balanceOf(address) external view returns (uint256); }
 interface GovSenderLike    { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
@@ -124,6 +125,7 @@ contract LZAvaxMigrationInitTest is Test {
     address constant AVAX_SUSDS          = 0xb94D9613C7aAB11E548a327154Cc80eCa911B5c1;
     address constant AVAX_OLD_USDS_OFT   = 0x4fec40719fD9a8AE3F8E20531669DEC5962D2619;
     address constant AVAX_OLD_SUSDS_OFT  = 0x7297D4811f088FC26bC5475681405B99b41E1FF9;
+    address constant OLD_L1_USDS_OFT     = 0x1e1D42781FC170EF9da004Fb735f56F0276d01B8; // V1 L1 USDS lockbox
     address constant AVAX_DVN_LZ_LABS    = 0x962F502A63F5FBeB44DC9ab932122648E8352959;
     address constant AVAX_DVN_NETHERMIND = 0xa59BA433ac34D2927232918Ef5B2eaAfcF130BA5;
 
@@ -353,6 +355,72 @@ contract LZAvaxMigrationInitTest is Test {
         // Old adapters (hardcoded constants) were denied.
         assertEq(WardsLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
         assertEq(WardsLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
+    }
+
+    // Avalanche need not be the first L2 brought up on the V2 OFTs. Simulate a prior Base migration
+    // (its route + global cap already live on both adapters, chainlog already repointed) and confirm
+    // migrateAvax still succeeds: the global caps are overwritten (the old zero-assert would have
+    // reverted), the Avalanche route is set fresh while the Base route is untouched, the chainlog
+    // rewrites are idempotent, and funding still drains the hardcoded legacy lockbox.
+    function test_migrateAvax_notFirstL2() public {
+        mainnet.selectFork();
+        address USDS            = chainlog.getAddress("USDS");
+        uint256 legacyBalBefore = TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT);
+
+        (AvaxMigration memory m, MockV2Adapter newUsds, MockV2Adapter newSusds) = _buildMigration(true);
+        // Non-zero Avalanche per-eid limits and system-wide (Base + Avalanche) global caps.
+        m.usds.rateLimits   = RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18, outboundWindow: 1 days, outboundLimit: 4_000_000e18});
+        m.susds.rateLimits  = RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18, outboundWindow: 1 days, outboundLimit: 4_000_000e18});
+        m.usdsGlobalLimits  = RateLimits({inboundWindow: 1 days, inboundLimit: 9_000_000e18, outboundWindow: 1 days, outboundLimit: 8_000_000e18});
+        m.susdsGlobalLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 7_000_000e18, outboundWindow: 1 days, outboundLimit: 6_000_000e18});
+
+        // --- A prior Base migration already brought these OFTs up ---
+        uint32 BASE_EID = 30184;
+        _presetRoute(newUsds,  BASE_EID, 3_000_000e18, 2_000_000e18);                  // Base route live
+        _presetRoute(newSusds, BASE_EID, 1_000_000e18, 1_000_000e18);
+        _presetRoute(newUsds,  newUsds.SENTINEL_EID(),  3_000_000e18, 2_000_000e18);   // Base-only global cap
+        _presetRoute(newSusds, newSusds.SENTINEL_EID(), 1_000_000e18, 1_000_000e18);
+        vm.startPrank(PAUSE_PROXY);
+        ChainlogSetLike(address(chainlog)).setAddress("USDS_OFT",        address(newUsds));
+        ChainlogSetLike(address(chainlog)).setAddress("SUSDS_OFT",       address(newSusds));
+        ChainlogSetLike(address(chainlog)).setAddress("USDS_OFT_SOLANA", OLD_L1_USDS_OFT);
+        vm.stopPrank();
+
+        // --- Avalanche migration runs second ---
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.startPrank(PAUSE_PROXY);
+        LZAvaxMigrationInit.migrateAvax(m);
+        vm.stopPrank();
+
+        // Global caps overwritten with the new system-wide totals (the old zero-assert would have reverted).
+        assertEq(newUsds.recordedInbound(newUsds.SENTINEL_EID()),    9_000_000e18);
+        assertEq(newUsds.recordedOutbound(newUsds.SENTINEL_EID()),   8_000_000e18);
+        assertEq(newSusds.recordedInbound(newSusds.SENTINEL_EID()),  7_000_000e18);
+        assertEq(newSusds.recordedOutbound(newSusds.SENTINEL_EID()), 6_000_000e18);
+
+        // Avalanche route set fresh; the pre-existing Base route is left untouched.
+        assertEq(newUsds.recordedInbound(AVAX_EID),  5_000_000e18);
+        assertEq(newUsds.recordedOutbound(AVAX_EID), 4_000_000e18);
+        assertEq(newUsds.recordedInbound(BASE_EID),  3_000_000e18);
+        assertEq(newUsds.recordedOutbound(BASE_EID), 2_000_000e18);
+
+        // Chainlog rewrites are idempotent: the same values land again.
+        assertEq(chainlog.getAddress("USDS_OFT"),        address(newUsds));
+        assertEq(chainlog.getAddress("SUSDS_OFT"),       address(newSusds));
+        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), OLD_L1_USDS_OFT);
+
+        // Funding still drains the hardcoded legacy lockbox, regardless of the already-repointed USDS_OFT.
+        assertEq(TokenLike(USDS).balanceOf(address(newUsds)), 10571537000000000000);
+        assertEq(TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT),  legacyBalBefore - 10571537000000000000);
+    }
+
+    // Simulate a prior spell having set a rate-limit bucket (per-eid or global) on a mock adapter.
+    function _presetRoute(MockV2Adapter oft, uint32 eid, uint256 inLimit, uint256 outLimit) internal {
+        RateLimitConfig[] memory inb = new RateLimitConfig[](1);
+        RateLimitConfig[] memory out = new RateLimitConfig[](1);
+        inb[0] = RateLimitConfig({eid: eid, window: 1 days, limit: inLimit});
+        out[0] = RateLimitConfig({eid: eid, window: 1 days, limit: outLimit});
+        oft.setRateLimits(inb, out);
     }
 
     function test_migrateAvax_revertsIfCcipAdminNotHandedOff() public {
