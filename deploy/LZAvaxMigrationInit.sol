@@ -53,6 +53,7 @@ struct AvaxMigration {
     uint256       ccipDvnIndex;       // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     OftActivation usds;               // L1 USDS OFT and its initial config
     RateLimits    usdsGlobalLimits;   // L1 USDS OFT global cap
+    bytes32       legacyCLKey;        // chainlog key to record the legacy (old V1) USDS OFT under
     OftActivation susds;              // L1 sUSDS OFT and its initial config
     RateLimits    susdsGlobalLimits;  // L1 sUSDS OFT global cap
     UlnConfig     recvUlnCfg;         // gov receiver: new receive DVN set
@@ -87,6 +88,7 @@ library LZAvaxMigrationInit {
     address internal constant AVAX_SUSDS          = 0xb94D9613C7aAB11E548a327154Cc80eCa911B5c1; // sUSDS on Avalanche
     address internal constant OLD_AVAX_USDS_OFT   = 0x4fec40719fD9a8AE3F8E20531669DEC5962D2619; // current Avalanche USDS OFT
     address internal constant OLD_AVAX_SUSDS_OFT  = 0x7297D4811f088FC26bC5475681405B99b41E1FF9; // current Avalanche sUSDS OFT
+    address internal constant OLD_L1_USDS_OFT     = 0x1e1D42781FC170EF9da004Fb735f56F0276d01B8; // V1 L1 USDS lockbox, kept for Solana
 
     // USDS supply on Avalanche (frozen) = backing moved old->new. sUSDS never bridged.
     uint256 internal constant AVAX_USDS_BACKING   = 10571537000000000000; // 10.571537 USDS
@@ -102,8 +104,11 @@ library LZAvaxMigrationInit {
     ///         token bridges (new OFT V2 adapters) in one L1 spell, relaying the Avalanche half
     ///         through the OLD relay (still owner + whitelisted).
     /// @dev    Assumes the deployer pre-configured the new adapters (the new Avalanche ones owned
-    ///         by the old relay until the handover) and that Avalanche is the FIRST remote on the
-    ///         CCIP DVN adapter and the first to use OFT V2.
+    ///         by the old relay until the handover). Avalanche is expected to be the first L2
+    ///         brought up on the V2 OFTs; if it isn't, the earlier L2's spell is assumed to have
+    ///         either left the chainlog unchanged or set USDS_OFT/SUSDS_OFT -> new OFTs and
+    ///         m.legacyCLKey -> legacy OFT, so this spell still works redundantly (see README).
+    ///         m.usds/susdsGlobalLimits must be the system-wide totals across every L2.
     function migrateAvax(AvaxMigration memory m) internal {
         address govSender = chainlog.getAddress("LZ_GOV_SENDER");
         address sendLib   = EndpointLike(OAppLike(govSender).endpoint()).getSendLibrary(govSender, AVAX_EID);
@@ -143,32 +148,31 @@ library LZAvaxMigrationInit {
         // Activate new, move backing old->new, sever the old Avalanche route (old stays live for
         // Solana), repoint the chainlog.
 
-        address usds       = chainlog.getAddress("USDS");
-        address oldUsdsOft = chainlog.getAddress("USDS_OFT");  // current lockbox, kept for Solana
+        address usds = chainlog.getAddress("USDS");
 
         LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy);
-        // Sets the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
+        // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
 
         uint256 before = TokenLike(usds).balanceOf(pProxy);
-        LockboxOftLike(oldUsdsOft).migrateLockedTokens(pProxy);
+        LockboxOftLike(OLD_L1_USDS_OFT).migrateLockedTokens(pProxy);
         uint256 migrated = TokenLike(usds).balanceOf(pProxy) - before;
         TokenLike(usds).transfer(m.usds.oft, AVAX_USDS_BACKING);
-        TokenLike(usds).transfer(oldUsdsOft, migrated - AVAX_USDS_BACKING);
+        TokenLike(usds).transfer(OLD_L1_USDS_OFT, migrated - AVAX_USDS_BACKING);
 
         // Sever the old Avalanche route: clearing the peer disables it. Then tidy up (old stays
         // live for Solana) — zero the stale inbound limit and neutralize enforced options. The
         // options can't be reset to empty (the setter rejects non-type-3 bytes), so write the
         // bare type-3 header.
-        OFTAdapterLike(oldUsdsOft).setPeer(AVAX_EID, bytes32(0));
-        LZInit.updateRateLimits(oldUsdsOft, AVAX_EID, RateLimits(0, 0, 0, 0));
+        OFTAdapterLike(OLD_L1_USDS_OFT).setPeer(AVAX_EID, bytes32(0));
+        LZInit.updateRateLimits(OLD_L1_USDS_OFT, AVAX_EID, RateLimits(0, 0, 0, 0));
         EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
         opts[0] = EnforcedOptionParam(AVAX_EID, LZInit.MSG_TYPE_SEND,          hex"0003");
         opts[1] = EnforcedOptionParam(AVAX_EID, LZInit.MSG_TYPE_SEND_AND_CALL, hex"0003");
-        OFTAdapterLike(oldUsdsOft).setEnforcedOptions(opts);
+        OFTAdapterLike(OLD_L1_USDS_OFT).setEnforcedOptions(opts);
 
-        chainlog.setAddress("USDS_OFT",        m.usds.oft);
-        chainlog.setAddress("USDS_OFT_SOLANA", oldUsdsOft);
+        chainlog.setAddress("USDS_OFT",    m.usds.oft);
+        chainlog.setAddress(m.legacyCLKey, OLD_L1_USDS_OFT);
         }
 
         // ============================ sUSDS OFT V2 swap ===========================
@@ -176,7 +180,7 @@ library LZAvaxMigrationInit {
         // teardown or Solana key, just denied on Avalanche.
 
         LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy);
-        // Sets the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
+        // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);
 
         chainlog.setAddress("SUSDS_OFT", m.susds.oft);

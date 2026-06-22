@@ -11,7 +11,7 @@ This repository provides general-purpose library functions (`LZInit.sol`) plus o
 - **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
 - **`wireOftPeer`** - Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero per-eid rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`updateGlobalRateLimits`** - Set an OFT's global (`SENTINEL_EID`) rate-limit cap — the L1 lockbox's (`SkyOFTAdapter`) aggregate limit across all remotes, on top of the per-eid buckets. L1-lockbox only (L2 remote OFTs have no global cap).
+- **`updateGlobalRateLimits`** - Set an OFT's global (`SENTINEL_EID`) rate-limit cap, the L1 lockbox's (`SkyOFTAdapter`) aggregate limit across all remotes, on top of the per-eid buckets. L1-lockbox only (L2 remote OFTs have no global cap).
 - **`updateRateLimits`** - Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`setUlnConfig`** - Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`unpauseOft`** - Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
@@ -58,7 +58,7 @@ Bundle the L2 calls into one relayed message so users can't bridge at the old hi
 
 #### OFT bridge
 
-For simplicity we assume the new DVN set is a superset of the old required set. Otherwise, messages sent during the wait window between Spell 1 and Spell 2 may not be verifiable on the receive side and could be stuck — a different sequence would be required.
+For simplicity we assume the new DVN set is a superset of the old required set. Otherwise, messages sent during the wait window between Spell 1 and Spell 2 may not be verifiable on the receive side and could be stuck; a different sequence would be required.
 
 Spell 1 (update sending sides):
 
@@ -127,6 +127,8 @@ Helpers for specific, single-use migrations, each built on the `LZInit` primitiv
 - **sUSDS bridge** → new OFT V2 adapters (L1 + Avalanche); the old ones are retired.
 
 Preconditions (deployer): the new relay and the new OFT V2 adapters (USDS + sUSDS, on both L1 and Avalanche) are deployed and pre-configured (peer, libs, DVNs, enforced options, fees off), and the new Avalanche adapters are owned by the **old** relay until the spell hands them over.
+
+Avalanche is expected to be the first L2 brought up on the V2 OFTs. If it isn't, it is assumed that the earlier L2's spell either hasn't updated the chainlog yet, or updated it consistently, with `USDS_OFT`/`SUSDS_OFT` pointing to the new V2 OFTs and the legacy key (`legacyCLKey`, e.g. `USDS_OFT_SOLANA`) to the old OFT. Under that assumption the spell still works, just redundantly: `migrateAvax`'s checks re-verify some of the already-checked state and the chainlog writes rewrite the same values, while the Avalanche route is set fresh and the global caps overwritten. The global-cap inputs must then be the system-wide totals across every L2 supported so far.
 
 ## Build
 

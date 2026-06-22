@@ -58,9 +58,6 @@ contract MockV2Adapter {
     UlnConfig public uln;
     bytes public enforcedOpts;
 
-    uint256 public sentinelOut;
-    uint256 public sentinelIn;
-
     mapping(uint32 eid => uint256) public recordedInbound;
     mapping(uint32 eid => uint256) public recordedOutbound;
 
@@ -69,8 +66,6 @@ contract MockV2Adapter {
     function configure(bytes32 _peer, ExecutorConfig memory _exec, UlnConfig memory _uln, bytes memory _opts) external {
         peer = _peer; execCfg = _exec; uln = _uln; enforcedOpts = _opts;
     }
-
-    function setSentinel(uint256 outLimit, uint256 inLimit) external { sentinelOut = outLimit; sentinelIn = inLimit; }
 
     function setDelegate(address d) external { delegate = d; }
     function transferOwnership(address o) external { owner = o; }
@@ -84,11 +79,11 @@ contract MockV2Adapter {
     function feeBps(uint32) external pure returns (uint16, bool) { return (0, false); }
     function enforcedOptions(uint32, uint16) external view returns (bytes memory) { return enforcedOpts; }
 
-    function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256) {
-        return (0, 0, 0, eid == SENTINEL_EID ? sentinelOut : 0);
+    function outboundRateLimits(uint32) external pure returns (uint128, uint48, uint256, uint256) {
+        return (0, 0, 0, 0);
     }
-    function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256) {
-        return (0, 0, 0, eid == SENTINEL_EID ? sentinelIn : 0);
+    function inboundRateLimits(uint32) external pure returns (uint128, uint48, uint256, uint256) {
+        return (0, 0, 0, 0);
     }
 
     function delegates(address) external view returns (address) { return delegate; }
@@ -299,6 +294,7 @@ contract LZAvaxMigrationInitTest is Test {
         m.newL2GovRelay   = newRelay;
         m.usds          = OftActivation({oft: address(newUsds),  cfg: usdsCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits = _zeroRL();
+        m.legacyCLKey   = "USDS_OFT_SOLANA";
         m.susds         = OftActivation({oft: address(newSusds), cfg: susdsCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
         m.recvUlnCfg      = recvUln;
@@ -375,7 +371,7 @@ contract LZAvaxMigrationInitTest is Test {
         this.runMigration(m);
     }
 
-    // --- activateOft V2 sentinel verification (mock adapter; no real V2 in the hybrid setup) ---
+    // --- activateOft + updateGlobalRateLimits (mock adapter; no real V2 in the hybrid setup) ---
 
     function _buildV2Adapter() internal returns (MockV2Adapter oft, OftConfig memory cfg) {
         address peerAddr = makeAddr("v2peer");
@@ -418,7 +414,8 @@ contract LZAvaxMigrationInitTest is Test {
     }
 
     function callActivateOftV2(address oft, OftConfig memory cfg, RateLimits memory rl, RateLimits memory grl) external {
-        LZInit.activateLockboxOft(oft, AVAX_EID, cfg, rl, 0, address(0x742065), address(this), grl);
+        LZInit.activateOft(oft, AVAX_EID, cfg, rl, 0, address(0x742065), address(this));
+        LZInit.updateGlobalRateLimits(oft, grl);
     }
 
     function test_activateOft_v2_setsPerEidAndGlobalLimits() public {
@@ -433,23 +430,5 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(oft.recordedOutbound(AVAX_EID), 4_000_000e18);
         assertEq(oft.recordedInbound(oft.SENTINEL_EID()),  9_000_000e18);
         assertEq(oft.recordedOutbound(oft.SENTINEL_EID()), 8_000_000e18);
-    }
-
-    function test_activateOft_v2_revertsIfGlobalOutboundPreset() public {
-        (MockV2Adapter oft, OftConfig memory cfg) = _buildV2Adapter();
-        oft.setSentinel(1, 0);
-        RateLimits memory rl;
-        RateLimits memory grl;
-        vm.expectRevert("LZInit/global-outbound-rl-nonzero");
-        this.callActivateOftV2(address(oft), cfg, rl, grl);
-    }
-
-    function test_activateOft_v2_revertsIfGlobalInboundPreset() public {
-        (MockV2Adapter oft, OftConfig memory cfg) = _buildV2Adapter();
-        oft.setSentinel(0, 1);
-        RateLimits memory rl;
-        RateLimits memory grl;
-        vm.expectRevert("LZInit/global-inbound-rl-nonzero");
-        this.callActivateOftV2(address(oft), cfg, rl, grl);
     }
 }
