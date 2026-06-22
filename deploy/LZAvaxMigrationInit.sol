@@ -146,7 +146,9 @@ library LZAvaxMigrationInit {
         address usds       = chainlog.getAddress("USDS");
         address oldUsdsOft = chainlog.getAddress("USDS_OFT");  // current lockbox, kept for Solana
 
-        LZInit.activateLockboxOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, m.usdsGlobalLimits);
+        LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy);
+        // Sets the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
+        LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
 
         uint256 before = TokenLike(usds).balanceOf(pProxy);
         LockboxOftLike(oldUsdsOft).migrateLockedTokens(pProxy);
@@ -173,7 +175,9 @@ library LZAvaxMigrationInit {
         // Activate new + repoint SUSDS_OFT. Old adapter (Avalanche-only) is retired — no funding,
         // teardown or Solana key, just denied on Avalanche.
 
-        LZInit.activateLockboxOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, m.susdsGlobalLimits);
+        LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy);
+        // Sets the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
+        LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);
 
         chainlog.setAddress("SUSDS_OFT", m.susds.oft);
 

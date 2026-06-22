@@ -222,8 +222,8 @@ library LZInit {
 
     /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay
     ///         on L2): verify its on-chain config, then set non-zero per-eid rate limits.
-    /// @dev    Also usable on L2 via LZL2Spell + relayToL2. For an L1 lockbox with a global
-    ///         (SENTINEL_EID) cap, use `activateLockboxOft`.
+    /// @dev    Also usable on L2 via LZL2Spell + relayToL2. For an L1 lockbox's global
+    ///         (SENTINEL_EID) cap, follow with `updateGlobalRateLimits`.
     function activateOft(
         address           oft,
         uint32            remoteEid,
@@ -237,28 +237,6 @@ library LZInit {
         updateRateLimits(oft, remoteEid, rateLimits);
     }
 
-    /// @notice Like `activateOft`, for an L1 lockbox (`SkyOFTAdapter`) with a global (SENTINEL_EID)
-    ///         cap on top of the per-eid buckets: verify the global bucket starts at zero, run the
-    ///         per-eid activation, then set the global cap — so activation flips every cap on at once.
-    function activateLockboxOft(
-        address           oft,
-        uint32            remoteEid,
-        OftConfig  memory cfg,
-        RateLimits memory rateLimits,
-        uint8             rlAccountingType,
-        address           token,
-        address           owner,
-        RateLimits memory globalRateLimits
-    ) internal {
-        uint32 sentinelEid = OFTAdapterLike(oft).SENTINEL_EID();
-        (,,, uint256 outGlobal) = OFTAdapterLike(oft).outboundRateLimits(sentinelEid);
-        (,,, uint256 inGlobal)  = OFTAdapterLike(oft).inboundRateLimits(sentinelEid);
-        require(outGlobal == 0, "LZInit/global-outbound-rl-nonzero");
-        require(inGlobal  == 0, "LZInit/global-inbound-rl-nonzero");
-        activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner);
-        updateRateLimits(oft, sentinelEid, globalRateLimits);
-    }
-
     /// @notice Update rate limits on an OFT adapter for a given destination.
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
     function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) internal {
@@ -267,6 +245,12 @@ library LZInit {
         inboundCfg[0]  = RateLimitConfig(remoteEid, rateLimits.inboundWindow,  rateLimits.inboundLimit);
         outboundCfg[0] = RateLimitConfig(remoteEid, rateLimits.outboundWindow, rateLimits.outboundLimit);
         OFTAdapterLike(oft).setRateLimits(inboundCfg, outboundCfg);
+    }
+
+    /// @notice Set an OFT's global (SENTINEL_EID) rate-limit cap — the L1 lockbox's aggregate
+    ///         limit across all remotes, on top of the per-eid buckets. L1 lockbox only.
+    function updateGlobalRateLimits(address oft, RateLimits memory rateLimits) internal {
+        updateRateLimits(oft, OFTAdapterLike(oft).SENTINEL_EID(), rateLimits);
     }
 
     /// @notice Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid.
