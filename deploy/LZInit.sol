@@ -120,6 +120,7 @@ interface OFTAdapterLike is OAppLike {
     function setEnforcedOptions(EnforcedOptionParam[] calldata opts) external;
     function unpause() external;
     function owner() external view returns (address);
+    function SENTINEL_EID() external view returns (uint32);
     function token() external view returns (address);
     function paused() external view returns (bool);
     function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
@@ -219,11 +220,10 @@ library LZInit {
         updateRateLimits(oft, remoteEid, rateLimits);
     }
 
-    /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1,
-    ///         L2GovernanceRelay on L2) by setting non-zero rate limits.
-    ///         Verifies the on-chain state was configured as expected before
-    ///         flipping the limits on.
-    /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
+    /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay
+    ///         on L2): verify its on-chain config, then set non-zero per-eid rate limits.
+    /// @dev    Also usable on L2 via LZL2Spell + relayToL2. For an L1 lockbox with a global
+    ///         (SENTINEL_EID) cap, use `activateLockboxOft`.
     function activateOft(
         address           oft,
         uint32            remoteEid,
@@ -235,6 +235,28 @@ library LZInit {
     ) internal {
         _verifyOftConfig(oft, remoteEid, cfg, rlAccountingType, token, owner);
         updateRateLimits(oft, remoteEid, rateLimits);
+    }
+
+    /// @notice Like `activateOft`, for an L1 lockbox (`SkyOFTAdapter`) with a global (SENTINEL_EID)
+    ///         cap on top of the per-eid buckets: verify the global bucket starts at zero, run the
+    ///         per-eid activation, then set the global cap — so activation flips every cap on at once.
+    function activateLockboxOft(
+        address           oft,
+        uint32            remoteEid,
+        OftConfig  memory cfg,
+        RateLimits memory rateLimits,
+        uint8             rlAccountingType,
+        address           token,
+        address           owner,
+        RateLimits memory globalRateLimits
+    ) internal {
+        uint32 sentinelEid = OFTAdapterLike(oft).SENTINEL_EID();
+        (,,, uint256 outGlobal) = OFTAdapterLike(oft).outboundRateLimits(sentinelEid);
+        (,,, uint256 inGlobal)  = OFTAdapterLike(oft).inboundRateLimits(sentinelEid);
+        require(outGlobal == 0, "LZInit/global-outbound-rl-nonzero");
+        require(inGlobal  == 0, "LZInit/global-inbound-rl-nonzero");
+        activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner);
+        updateRateLimits(oft, sentinelEid, globalRateLimits);
     }
 
     /// @notice Update rate limits on an OFT adapter for a given destination.

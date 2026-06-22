@@ -2,15 +2,16 @@
 
 Library for Sky governance spells to help manage SkyLink and its extension to new chains.
 
-This repository provides library functions (`LZInit.sol`) intended to be imported and called from a governance spell. It does not contain deployment scripts: deploying and pre-configuring newly deployed remote contracts is the responsibility of the deployer and is assumed to happen separately, before the spell runs.
+This repository provides general-purpose library functions (`LZInit.sol`) plus one-off helpers for specific migrations (the Avalanche hardening migration being the current example), intended to be imported and called from a governance spell. It does not contain deployment scripts: deploying and pre-configuring newly deployed remote contracts is the responsibility of the deployer and is assumed to happen separately, before the spell runs.
 
-## Library Functions (`LZInit.sol`)
+## General-Purpose Library (`LZInit.sol`)
 
 ### Configuration Functions
 
 - **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
 - **`wireOftPeer`** - Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero per-eid rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`. For an L1 lockbox, use `activateLockboxOft`.
+- **`activateLockboxOft`** - Like `activateOft`, but for an L1 lockbox (`SkyOFTAdapter`) that carries a global (`SENTINEL_EID`) cap on top of the per-eid buckets: verifies the global bucket starts at zero, runs the per-eid activation, then sets the global cap — so activation is the single point that flips every cap on. L1-only (the L2 remote OFTs have no global cap).
 - **`updateRateLimits`** - Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`setUlnConfig`** - Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`unpauseOft`** - Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
@@ -19,11 +20,11 @@ This repository provides library functions (`LZInit.sol`) intended to be importe
 
 - **`relayToL2`** - Forward an arbitrary call to an `LZL2Spell` on a destination chain via the LZ governance bridge. Spell authors construct `targetData` with `abi.encodeCall(LZL2Spell.x, (...))`.
 
-## L2 Spell (`LZL2Spell.sol`)
+### L2 Spell (`LZL2Spell.sol`)
 
 Deployed once per L2, delegatecalled by `L2GovernanceRelay`. Exposes `wireOftPeer`, `activateOft`, `updateRateLimits`, `setUlnConfig`, and `unpauseOft` for remote execution via `relayToL2`, plus `multicall` to bundle several of these into a single relayed message.
 
-## Disclaimer: ordering of relayed calls
+### Disclaimer: ordering of relayed calls
 
 LZ does not guarantee the execution order of relayed messages. If a spell relays more than one message and order matters for safety, bundle the L2-side work into a single message via `LZL2Spell.multicall` and/or split the work across multiple spells.
 
@@ -112,6 +113,20 @@ To add Base as a new remote for both USDS and sUSDS, after the deployer has depl
 - `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)), ...)` - wire Avalanche sUSDS to Base
 - `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)), ...)` - wire Plasma USDS to Base
 - `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)), ...)` - wire Plasma sUSDS to Base
+
+## One-off Migration Helpers
+
+Helpers for specific, single-use migrations, each built on the `LZInit` primitives as its own pair of files (an L1 `*Init` library + an L2 spell). The Avalanche hardening migration is the current example.
+
+### Avalanche hardening migration (`LZAvaxMigrationInit.sol` + `LZAvaxMigrationL2Spell.sol`)
+
+`migrateAvax` (L1) + the `migrateAvaxRemote` it relays to Avalanche move the Sky↔Avalanche bridges to a hardened setup in a single spell:
+
+- **Gov bridge** → new DVN set and a new delay/freezer `L2GovernanceRelay`.
+- **USDS bridge** → new OFT V2 adapters (L1 + Avalanche); the Avalanche backing is moved from the old L1 adapter to the new one, and the old adapter stays live for Solana.
+- **sUSDS bridge** → new OFT V2 adapters (L1 + Avalanche); the old ones are retired.
+
+Preconditions (deployer): the new relay and the new OFT V2 adapters (USDS + sUSDS, on both L1 and Avalanche) are deployed and pre-configured (peer, libs, DVNs, enforced options, fees off), and the new Avalanche adapters are owned by the **old** relay until the spell hands them over.
 
 ## Build
 
