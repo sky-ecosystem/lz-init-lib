@@ -369,16 +369,16 @@ library LZInit {
         require(oft_.msgInspector()            == address(0),                          "LZInit/msg-inspector-nonzero");
 
         {
-            (uint16 feeBps, bool feeEnabled) = oft_.feeBps(remoteEid);
-            require(oft_.defaultFeeBps() == 0,                "LZInit/default-fee-nonzero");
-            require(feeBps               == 0 && !feeEnabled, "LZInit/fee-nonzero");
+        (uint16 feeBps, bool feeEnabled) = oft_.feeBps(remoteEid);
+        require(oft_.defaultFeeBps() == 0,                "LZInit/default-fee-nonzero");
+        require(feeBps               == 0 && !feeEnabled, "LZInit/fee-nonzero");
         }
 
         {
-            (,,, uint256 outLimit) = oft_.outboundRateLimits(remoteEid);
-            (,,, uint256 inLimit)  = oft_.inboundRateLimits(remoteEid);
-            require(outLimit == 0, "LZInit/outbound-rl-nonzero");
-            require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
+        (,,, uint256 outLimit) = oft_.outboundRateLimits(remoteEid);
+        (,,, uint256 inLimit)  = oft_.inboundRateLimits(remoteEid);
+        require(outLimit == 0, "LZInit/outbound-rl-nonzero");
+        require(inLimit  == 0, "LZInit/inbound-rl-nonzero");
         }
 
         require(ep.getSendLibrary(oft, remoteEid) == cfg.sendLib, "LZInit/send-lib-mismatch");

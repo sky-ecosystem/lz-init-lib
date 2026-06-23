@@ -259,9 +259,19 @@ contract LZAvaxMigrationInitTest is Test {
         LZAvaxMigrationInit.migrateAvax(m);
     }
 
-    // Builds the AvaxMigration. `ccipHandedOff` toggles the CCIP adapter's DEFAULT_ADMIN_ROLE
-    // grant to the pause proxy, to exercise the admin-handoff sanity check.
+    // Builds the AvaxMigration with the CCIP adapter fully set up (all roles granted) as the
+    // SendSideDeployer would have left it.
     function _buildMigration(bool ccipHandedOff)
+        internal
+        returns (AvaxMigration memory m, MockV2Adapter newUsds, MockV2Adapter newSusds)
+    {
+        return _buildMigration(true, true, ccipHandedOff);
+    }
+
+    // Builds the AvaxMigration. The flags toggle each CCIP adapter role grant individually, to
+    // exercise the send-side sanity checks: `ccipMsgLibRole` (send lib's MESSAGE_LIB_ROLE),
+    // `ccipAllowlisted` (gov sender on the ALLOWLIST), `ccipHandedOff` (admin handed to pause proxy).
+    function _buildMigration(bool ccipMsgLibRole, bool ccipAllowlisted, bool ccipHandedOff)
         internal
         returns (AvaxMigration memory m, MockV2Adapter newUsds, MockV2Adapter newSusds)
     {
@@ -278,20 +288,19 @@ contract LZAvaxMigrationInitTest is Test {
         recvUln.requiredDVNs[1] = AVAX_DVN_NETHERMIND;
 
         {
-            address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
-            // New gov send DVN set: reuse the current optional set (full overlap, passes the guard).
-            UlnConfig memory cfg = UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID);
+        address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
+        // New gov send DVN set: reuse the current optional set (full overlap, passes the guard).
+        UlnConfig memory cfg = UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID);
 
-            // CCIP DVN adapter as the SendSideDeployer would have left it (roles granted, admin handed off).
-            MockCCIPDVNAdapter ccip = new MockCCIPDVNAdapter();
-            ccip.grant(keccak256("MESSAGE_LIB_ROLE"), sendLib);
-            ccip.grant(keccak256("ALLOWLIST"),        GOV_SENDER);
-            if (ccipHandedOff) ccip.grant(bytes32(0), PAUSE_PROXY);  // DEFAULT_ADMIN_ROLE
+        MockCCIPDVNAdapter ccip = new MockCCIPDVNAdapter();
+        if (ccipMsgLibRole)  ccip.grant(keccak256("MESSAGE_LIB_ROLE"), sendLib);
+        if (ccipAllowlisted) ccip.grant(keccak256("ALLOWLIST"),        GOV_SENDER);
+        if (ccipHandedOff)   ccip.grant(bytes32(0),                    PAUSE_PROXY);  // DEFAULT_ADMIN_ROLE
 
-            // Splice it into the (sorted) send-side optional DVN set so migrateAvax can index it out.
-            (cfg.optionalDVNs, m.ccipDvnIndex) = _insertSorted(cfg.optionalDVNs, address(ccip));
-            cfg.optionalDVNCount = uint8(cfg.optionalDVNs.length);
-            m.sendUlnCfg = cfg;
+        // Splice it into the (sorted) send-side optional DVN set so migrateAvax can index it out.
+        (cfg.optionalDVNs, m.ccipDvnIndex) = _insertSorted(cfg.optionalDVNs, address(ccip));
+        cfg.optionalDVNCount = uint8(cfg.optionalDVNs.length);
+        m.sendUlnCfg = cfg;
         }
         m.newL2GovRelay   = newRelay;
         m.usds          = OftActivation({oft: address(newUsds),  cfg: usdsCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
@@ -423,6 +432,31 @@ contract LZAvaxMigrationInitTest is Test {
         oft.setRateLimits(inb, out);
     }
 
+    function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
+        mainnet.selectFork();
+        (AvaxMigration memory m,,) = _buildMigration(true);
+        // A new optional DVN set sharing nothing with the current on-chain set fails the overlap guard.
+        address[] memory dvns = new address[](2);
+        dvns[0] = address(0x1); dvns[1] = address(0x2);  // sorted ascending, disjoint from the real set
+        m.sendUlnCfg.optionalDVNs = dvns;
+        vm.expectRevert(bytes("LZAvaxMigrationInit/insufficient-dvn-overlap"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipSendLibMissingRole() public {
+        mainnet.selectFork();
+        (AvaxMigration memory m,,) = _buildMigration(false, true, true);  // send lib lacks MESSAGE_LIB_ROLE
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-sendlib-missing-role"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipGovSenderNotAllowlisted() public {
+        mainnet.selectFork();
+        (AvaxMigration memory m,,) = _buildMigration(true, false, true);  // gov sender not on the allowlist
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted"));
+        this.runMigration(m);
+    }
+
     function test_migrateAvax_revertsIfCcipAdminNotHandedOff() public {
         mainnet.selectFork();
         (AvaxMigration memory m,,) = _buildMigration(false);  // CCIP admin not handed off to the pause proxy
@@ -436,6 +470,16 @@ contract LZAvaxMigrationInitTest is Test {
         // A second allowlisted OApp (e.g. a testing one not revoked on handoff) trips the check.
         MockCCIPDVNAdapter(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]).grant(keccak256("ALLOWLIST"), address(0xBEEF));
         vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-allowlist-not-singleton"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipIndexOutOfBounds() public {
+        mainnet.selectFork();
+        (AvaxMigration memory m,,) = _buildMigration(true);
+        // An index past the end of the optional DVN set panics on access, so a bogus index can't
+        // sneak past the membership requirement.
+        m.ccipDvnIndex = m.sendUlnCfg.optionalDVNs.length;
+        vm.expectRevert(stdError.indexOOBError);
         this.runMigration(m);
     }
 

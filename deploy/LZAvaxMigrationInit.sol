@@ -123,11 +123,11 @@ library LZAvaxMigrationInit {
         // Sanity check the CCIP DVN adapter setup. Indexing the adapter out of the DVN set also enforces
         // it's a member.
         {
-            CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]);
-            require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),   "LZAvaxMigrationInit/ccip-sendlib-missing-role");
-            require(ccip.hasRole(ALLOWLIST,          govSender), "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
-            require(ccip.allowlistSize()             == 1,       "LZAvaxMigrationInit/ccip-allowlist-not-singleton");
-            require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),    "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+        CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]);
+        require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),   "LZAvaxMigrationInit/ccip-sendlib-missing-role");
+        require(ccip.hasRole(ALLOWLIST,          govSender), "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
+        require(ccip.allowlistSize()             == 1,       "LZAvaxMigrationInit/ccip-allowlist-not-singleton");
+        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),    "LZAvaxMigrationInit/ccip-admin-not-handed-off");
         }
 
         // ============================ Relay L2 spell ============================
