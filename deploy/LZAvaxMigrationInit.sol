@@ -107,7 +107,8 @@ library LZAvaxMigrationInit {
     ///         brought up on the V2 OFTs; if it isn't, the earlier L2's spell is assumed to have
     ///         either left the chainlog unchanged or set USDS_OFT/SUSDS_OFT -> new OFTs and
     ///         m.legacyCLKey -> legacy OFT, so this spell still works redundantly (see README).
-    ///         m.usds/susdsGlobalLimits must be the system-wide totals across every L2.
+    ///         m.usds/susdsGlobalLimits must be the system-wide totals across every L2 on the new
+    ///         lockbox (excluding Solana, which stays on the old USDS adapter).
     function migrateAvax(AvaxMigration memory m) internal {
         address govSender = chainlog.getAddress("LZ_GOV_SENDER");
         address sendLib   = EndpointLike(OAppLike(govSender).endpoint()).getSendLibrary(govSender, AVAX_EID);
@@ -171,8 +172,9 @@ library LZAvaxMigrationInit {
         }
 
         // ============================ sUSDS OFT V2 swap ===========================
-        // Activate new + repoint SUSDS_OFT. Old adapter (Avalanche-only) is retired — no funding,
-        // teardown or Solana key, just denied on Avalanche.
+        // Activate new + repoint SUSDS_OFT. The old L1 sUSDS adapter is fully abandoned (not kept
+        // for Solana, unlike USDS), so no need to sever its Avalanche route here: its peer is left
+        // set and its rate limits are already 0 on-chain.
 
         LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
