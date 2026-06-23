@@ -347,11 +347,8 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(TokenLike(USDS).balanceOf(address(newUsds)), 10571537000000000000);
         assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
 
-        // Old USDS adapter's Avalanche route severed; gov-relay whitelist swapped.
+        // Old USDS adapter's Avalanche route severed (peer cleared); gov-relay whitelist swapped.
         assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
-        // Enforced options neutralized to the bare type-3 header (cannot be set back to empty).
-        assertEq(OFTAdapterLike(oldUsds).enforcedOptions(AVAX_EID, 1), hex"0003");
-        assertEq(OFTAdapterLike(oldUsds).enforcedOptions(AVAX_EID, 2), hex"0003");
         assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
         assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(AVAX_L2_GOV_RELAY)))));
 

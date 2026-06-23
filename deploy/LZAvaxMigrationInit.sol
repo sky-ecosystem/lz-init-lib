@@ -6,7 +6,6 @@ import {
     OftConfig,
     RateLimits,
     UlnConfig,
-    EnforcedOptionParam,
     EndpointLike,
     UlnLike,
     OFTAdapterLike,
@@ -160,16 +159,12 @@ library LZAvaxMigrationInit {
         TokenLike(usds).transfer(m.usds.oft, AVAX_USDS_BACKING);
         TokenLike(usds).transfer(OLD_L1_USDS_OFT, migrated - AVAX_USDS_BACKING);
 
-        // Sever the old Avalanche route: clearing the peer disables it. Then tidy up (old stays
-        // live for Solana) — zero the stale inbound limit and neutralize enforced options. The
-        // options can't be reset to empty (the setter rejects non-type-3 bytes), so write the
-        // bare type-3 header.
+        // Sever the old Avalanche route: clearing the peer disables it, then zero the stale rate
+        // limits (old stays live for Solana). The rest of the AVAX_EID route config (send/receive
+        // libraries, their DVN/executor configs, enforced options) is left in place: all inert once
+        // the peer is cleared.
         OFTAdapterLike(OLD_L1_USDS_OFT).setPeer(AVAX_EID, bytes32(0));
         LZInit.updateRateLimits(OLD_L1_USDS_OFT, AVAX_EID, RateLimits(0, 0, 0, 0));
-        EnforcedOptionParam[] memory opts = new EnforcedOptionParam[](2);
-        opts[0] = EnforcedOptionParam(AVAX_EID, LZInit.MSG_TYPE_SEND,          hex"0003");
-        opts[1] = EnforcedOptionParam(AVAX_EID, LZInit.MSG_TYPE_SEND_AND_CALL, hex"0003");
-        OFTAdapterLike(OLD_L1_USDS_OFT).setEnforcedOptions(opts);
 
         chainlog.setAddress("USDS_OFT",    m.usds.oft);
         chainlog.setAddress(m.legacyCLKey, OLD_L1_USDS_OFT);
