@@ -17,6 +17,10 @@ import {
     OFTAdapterLike
 } from "deploy/LZInit.sol";
 
+// Real audited V2 lockbox (flattened), to exercise the V2-only global (SENTINEL_EID) cap.
+// See test/mocks header for provenance.
+import { SkyOFTAdapter, ERC1967Proxy } from "./mocks/SkyOFTAdaptersFlat.sol";
+
 interface ChainlogReadLike {
     function getAddress(bytes32) external view returns (address);
 }
@@ -473,6 +477,31 @@ contract LZInitTest is Test {
         (, obWindow,, obLimit) = OFTAdapterLike(USDS_OFT).outboundRateLimits(AVAX_EID);
         assertEq(obWindow, rl.outboundWindow);
         assertEq(obLimit,  rl.outboundLimit);
+    }
+
+    // ==================================
+    //  updateGlobalRateLimits
+    // ==================================
+
+    function test_updateGlobalRateLimits() public {
+        address impl = address(new SkyOFTAdapter(chainlog.getAddress("USDS"), ENDPOINT));
+        address oft  = address(new ERC1967Proxy(impl, abi.encodeWithSignature("initialize(address)", address(this))));
+
+        RateLimits memory grl = RateLimits({
+            inboundWindow:  1 days,
+            inboundLimit:   9_000_000e18,
+            outboundWindow: 1 days + 1,
+            outboundLimit:  8_000_000e18
+        });
+        LZInit.updateGlobalRateLimits(oft, grl);
+
+        uint32 sentinel = OFTAdapterLike(oft).SENTINEL_EID();
+        (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(oft).inboundRateLimits(sentinel);
+        assertEq(ibWindow, grl.inboundWindow);
+        assertEq(ibLimit,  grl.inboundLimit);
+        (, uint48 obWindow,, uint256 obLimit) = OFTAdapterLike(oft).outboundRateLimits(sentinel);
+        assertEq(obWindow, grl.outboundWindow);
+        assertEq(obLimit,  grl.outboundLimit);
     }
 
     // ==================================
