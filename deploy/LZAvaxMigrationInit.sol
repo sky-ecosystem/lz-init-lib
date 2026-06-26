@@ -215,6 +215,9 @@ library LZAvaxMigrationInit {
 
     /// @notice The Avalanche half, run as one delegatecall by the OLD relay: bring up the new
     ///         remote OFTs and hand them (and their tokens) + the gov bridge to the new relay.
+    /// @dev    Remote-side sanity checks are intentionally limited: the receive DVN set (including its
+    ///         DVNReplica slots and their upstream broadcasters) and the remote CCIP DVN adapter are
+    ///         assumed to have been verified off-chain.
     function migrateAvaxRemote(
         UlnConfig     memory recvUlnCfg,
         address              newRelay,

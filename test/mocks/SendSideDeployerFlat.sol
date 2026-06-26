@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity >=0.8.0 ^0.8.0 ^0.8.1 ^0.8.2 ^0.8.20 ^0.8.24;
 
-// Provenance: `forge flatten` of sky-ecosystem/lz-gov-dvns-deploy@dev (SendSideDeployer), which
-// pulls in the real LayerZero CCIPDVNAdapter + CCIPDVNAdapterFeeLib. Real source, NOT a mock.
-// Compiled under this repo's settings, so behavior is faithful but the bytecode is not
-// bit-identical to the deployed/audited artifact. Regenerate via `forge flatten`; do not hand-edit.
+// Provenance: `forge flatten` of sky-ecosystem/lz-gov-dvns-deploy@dev
+// (commit c72a2b3e5cf4b40546fa4f92611996e86354616e): SendSideDeployer plus the real LayerZero
+// CCIPDVNAdapter + CCIPDVNAdapterFeeLib. Compiled under this repo's settings, so behavior is
+// faithful but the bytecode is not bit-identical to the deployed/audited artifact.
+// Regenerate via `forge flatten`; do not hand-edit.
 
 // lib/LayerZero-v2/packages/layerzero-v2/evm/messagelib/node_modules/@openzeppelin/contracts/utils/Address.sol
 

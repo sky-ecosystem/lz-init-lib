@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.4.11 >=0.4.16 >=0.6.2 >=0.8.0 ^0.8.0 ^0.8.20 ^0.8.21 ^0.8.22;
 
-// Provenance: `forge flatten` of sky-ecosystem/sky-oapp-oft@sky-oft-v2 (SkyOFTAdapter +
-// SkyOFTAdapterMintBurn) plus OpenZeppelin ERC1967Proxy. Real audited source, NOT a mock.
-// Compiled under this repo's settings, so behavior is faithful but the bytecode is not
-// bit-identical to the deployed/audited artifact. Regenerate via `forge flatten`; do not hand-edit.
+// Provenance: `forge flatten` of sky-ecosystem/sky-oapp-oft@sky-oft-v2
+// (commit a06a31e3e2492ac979cab0e458fce5c8e67bab2a): SkyOFTAdapter + SkyOFTAdapterMintBurn plus
+// OpenZeppelin ERC1967Proxy. Compiled under this repo's settings, so behavior is faithful but the
+// bytecode is not bit-identical to the deployed/audited artifact. Regenerate via `forge flatten`;
+// do not hand-edit.
 
 // node_modules/@layerzerolabs/lz-evm-protocol-v2/contracts/libs/AddressCast.sol
 
