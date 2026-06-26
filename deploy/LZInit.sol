@@ -80,7 +80,7 @@ interface EndpointLike {
     function getSendLibrary(address oapp, uint32 eid) external view returns (address);
     function isDefaultSendLibrary(address sender, uint32 dstEid) external view returns (bool);
     function getReceiveLibrary(address oapp, uint32 eid) external view returns (address, bool);
-    function receiveLibraryTimeout(address oapp, uint32 eid) external view returns (address lib);
+    function receiveLibraryTimeout(address oapp, uint32 eid) external view returns (address);
     function getConfig(address oapp, address lib, uint32 eid, uint32 configType) external view returns (bytes memory);
 }
 
@@ -133,7 +133,7 @@ interface OFTAdapterLike is OAppLike {
 }
 
 interface ChainlogLike {
-    function getAddress(bytes32) external view returns (address);
+    function getAddress(bytes32 key) external view returns (address);
 }
 
 library LZInit {

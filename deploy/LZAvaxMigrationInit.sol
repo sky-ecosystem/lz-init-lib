@@ -13,8 +13,8 @@ import {
 } from "./LZInit.sol";
 
 interface TokenLike {
-    function balanceOf(address) external view returns (uint256);
-    function transfer(address, uint256) external returns (bool);
+    function balanceOf(address usr) external view returns (uint256);
+    function transfer(address to, uint256 amount) external;
     function rely(address usr) external;
     function deny(address usr) external;
 }
@@ -30,13 +30,22 @@ interface LockboxOftLike {
 }
 
 interface ChainlogLike {
-    function getAddress(bytes32) external view returns (address);
-    function setAddress(bytes32, address) external;
+    function getAddress(bytes32 key) external view returns (address);
+    function setAddress(bytes32 key, address addr) external;
 }
 
 interface CCIPDVNAdapterLike {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function allowlistSize() external view returns (uint64);
+}
+
+interface LZAvaxMigrationL2SpellLike {
+    function migrateAvaxRemote(
+        UlnConfig     memory recvUlnCfg,
+        address              newRelay,
+        OftActivation memory avaxUsds,
+        OftActivation memory avaxSusds
+    ) external;
 }
 
 struct OftActivation {
@@ -50,6 +59,7 @@ struct AvaxMigration {
     UlnConfig     sendUlnCfg;         // gov sender: new send DVN set
     address       newL2GovRelay;      // new L2GovernanceRelay
     uint256       ccipDvnIndex;       // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
+    uint64        ccipAllowlistSize;  // expected CCIP DVN adapter allowlist size
     OftActivation usds;               // L1 USDS OFT and its initial config
     RateLimits    usdsGlobalLimits;   // L1 USDS OFT global cap
     bytes32       legacyCLKey;        // chainlog key to record the legacy (old V1) USDS OFT under
@@ -61,15 +71,6 @@ struct AvaxMigration {
     address       l2Spell;            // LZAvaxMigrationL2Spell on Avalanche
     uint128       gas;                // relay gas
     uint256       maxFee;             // relay max fee
-}
-
-interface LZAvaxMigrationL2SpellLike {
-    function migrateAvaxRemote(
-        UlnConfig     memory recvUlnCfg,
-        address              newRelay,
-        OftActivation memory avaxUsds,
-        OftActivation memory avaxSusds
-    ) external;
 }
 
 /// @notice One-off helpers for the Avalanche gov-bridge + OFT V2 migration, built on the
@@ -121,18 +122,20 @@ library LZAvaxMigrationInit {
         _checkDvnOverlap(govSender, sendLib, m.sendUlnCfg);
 
         // Sanity check the CCIP DVN adapter setup. Indexing the adapter out of the DVN set also enforces
-        // it's a member.
+        // it's a member. Assumes the adapter was verified off-chain to have been deployed by the
+        // SendSideDeployer contract.
         {
         CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]);
-        require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),   "LZAvaxMigrationInit/ccip-sendlib-missing-role");
-        require(ccip.hasRole(ALLOWLIST,          govSender), "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
-        require(ccip.allowlistSize()             == 1,       "LZAvaxMigrationInit/ccip-allowlist-not-singleton");
-        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),    "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+        require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),               "LZAvaxMigrationInit/ccip-sendlib-missing-role");
+        require(ccip.hasRole(ALLOWLIST,          govSender),             "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
+        require(ccip.allowlistSize()             == m.ccipAllowlistSize, "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
+        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),                "LZAvaxMigrationInit/ccip-admin-not-handed-off");
         }
 
         // ============================ Relay L2 spell ============================
-        // Relay through the OLD relay, under the still-old send config so the old Avalanche
-        // receive config can verify it. Must precede the L1 send-DVN update + whitelist swap below.
+        // Relay through the OLD relay (still whitelisted), before the whitelist swap below. The L1
+        // send-DVN update lands in the same transaction, but the DVN overlap checked above keeps the
+        // relayed message verifiable.
 
         LZInit.relayToL2(
             AVAX_EID, OLD_AVAX_GOV_RELAY, m.l2Spell,

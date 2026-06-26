@@ -313,6 +313,7 @@ contract LZAvaxMigrationInitTest is Test {
         m.sendUlnCfg = cfg;
         }
         m.newL2GovRelay   = newRelay;
+        m.ccipAllowlistSize = 1;  // SendSideDeployer allowlists exactly the gov sender
         m.usds          = OftActivation({oft: newUsds,  cfg: usdsCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits = _zeroRL();
         m.legacyCLKey   = "USDS_OFT_SOLANA";
@@ -482,15 +483,31 @@ contract LZAvaxMigrationInitTest is Test {
         this.runMigration(m);
     }
 
-    function test_migrateAvax_revertsIfCcipAllowlistNotSingleton() public {
+    function test_migrateAvax_revertsIfCcipAllowlistSizeMismatch() public {
         mainnet.selectFork();
-        (AvaxMigration memory m,,) = _buildMigration({ccipHandedOff: true});
-        // A second allowlisted OApp (e.g. a testing one not revoked on handoff) trips the check.
-        // Post-handoff the pause proxy holds DEFAULT_ADMIN_ROLE, so it grants the extra allowlist.
+        (AvaxMigration memory m,,) = _buildMigration({ccipHandedOff: true});  // expects size 1
+        // A second allowlisted OApp (size 2) no longer matches the expected size.
         vm.prank(PAUSE_PROXY);
         CCIPDVNAdapter(payable(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex])).grantRole(keccak256("ALLOWLIST"), address(0xBEEF));
-        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-allowlist-not-singleton"));
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-allowlist-size-mismatch"));
         this.runMigration(m);
+    }
+
+    function test_migrateAvax_acceptsLargerCcipAllowlist() public {
+        // A Star sharing the CCIP adapter adds a second allowlisted entry; the spell passes the
+        // matching expected size (e.g. 2) instead of assuming a singleton.
+        mainnet.selectFork();
+        (AvaxMigration memory m,,) = _buildMigration({ccipHandedOff: true});
+        m.ccipAllowlistSize = 2;
+        vm.prank(PAUSE_PROXY);
+        CCIPDVNAdapter(payable(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex])).grantRole(keccak256("ALLOWLIST"), address(0xBEEF));
+
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.startPrank(PAUSE_PROXY);
+        LZAvaxMigrationInit.migrateAvax(m);  // does not revert
+        vm.stopPrank();
+
+        assertEq(chainlog.getAddress("USDS_OFT"), m.usds.oft);  // proof it ran to completion
     }
 
     function test_migrateAvax_revertsIfCcipIndexOutOfBounds() public {
