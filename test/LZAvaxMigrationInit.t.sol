@@ -32,8 +32,15 @@ import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendPar
 import { SendSideDeployer, CCIPDVNCfg, CCIPDVNAdapter } from "./mocks/SendSideDeployerFlat.sol";
 import { L2GovernanceRelay } from "./mocks/L2GovernanceRelay.sol";
 
-interface ChainlogLike  { function getAddress(bytes32) external view returns (address); function setAddress(bytes32, address) external; }
-interface TokenLike     { function balanceOf(address) external view returns (uint256); function wards(address) external view returns (uint256); function approve(address spender, uint256 amount) external returns (bool); }
+interface ChainlogLike {
+    function getAddress(bytes32) external view returns (address);
+    function setAddress(bytes32, address) external;
+}
+interface TokenLike {
+    function balanceOf(address) external view returns (uint256);
+    function wards(address) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+}
 interface GovSenderLike { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
 interface OwnableLike   { function owner() external view returns (address); }
 
