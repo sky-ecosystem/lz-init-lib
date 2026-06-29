@@ -258,11 +258,12 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_L2_GOV_RELAY),  0);
 
         // Delegate + ownership handed to the new relay (gov receiver + both adapters).
-        assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(),          newRelay);
-        assertEq(OFTAdapterLike(avaxUsds.oft).owner(),            newRelay);
-        assertEq(EndpointLike(ENDPOINT).delegates(avaxUsds.oft),  newRelay);
-        assertEq(OFTAdapterLike(avaxSusds.oft).owner(),           newRelay);
-        assertEq(EndpointLike(ENDPOINT).delegates(avaxSusds.oft), newRelay);
+        assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(),              newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(AVAX_GOV_RECEIVER), newRelay);
+        assertEq(OFTAdapterLike(avaxUsds.oft).owner(),               newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(avaxUsds.oft),     newRelay);
+        assertEq(OFTAdapterLike(avaxSusds.oft).owner(),              newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(avaxSusds.oft),    newRelay);
     }
 
     // --- migrateAvax: full L1 spell (funding / chainlog / whitelist) + relay to Avalanche ---
@@ -366,8 +367,15 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
         assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
 
-        // Old USDS adapter's Avalanche route severed (peer cleared); gov-relay whitelist swapped.
+        // Old USDS adapter's Avalanche route severed: peer cleared + rate limits zeroed.
         assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
+        assertEq(_inLimit(oldUsds,  AVAX_EID), 0);
+        assertEq(_outLimit(oldUsds, AVAX_EID), 0);
+
+        // Gov bridge: new send DVN set installed + relay whitelist swapped (old -> new relay).
+        address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
+        assertEq(keccak256(abi.encode(UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID))),
+                 keccak256(abi.encode(m.sendUlnCfg)));
         assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
         assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(AVAX_L2_GOV_RELAY)))));
 
@@ -498,6 +506,16 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(uint8(L2GovernanceRelay(newRelay).getActionState(0)), uint8(L2GovernanceRelay.ActionState.Executed));
     }
 
+    // Pre-set a rate-limit bucket on a new lockbox as the pause proxy (owner), simulating a prior spell.
+    function _presetRoute(address oft, uint32 eid, uint256 inLimit, uint256 outLimit) internal {
+        RateLimitConfig[] memory inb = new RateLimitConfig[](1);
+        RateLimitConfig[] memory out = new RateLimitConfig[](1);
+        inb[0] = RateLimitConfig({eid: eid, window: 1 days, limit: inLimit});
+        out[0] = RateLimitConfig({eid: eid, window: 1 days, limit: outLimit});
+        vm.prank(PAUSE_PROXY);
+        OFTAdapterLike(oft).setRateLimits(inb, out);
+    }
+
     // Avalanche need not be the first L2 brought up on the V2 OFTs. Simulate a prior Base migration
     // (its route + global cap already live on both adapters, chainlog already repointed) and confirm
     // migrateAvax still succeeds: the global caps are overwritten despite being already non-zero, the
@@ -557,16 +575,6 @@ contract LZAvaxMigrationInitTest is Test {
         // Funding still drains the hardcoded legacy lockbox, regardless of the already-repointed USDS_OFT.
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft),         10571537000000000000);
         assertEq(TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT), legacyBalBefore - 10571537000000000000);
-    }
-
-    // Pre-set a rate-limit bucket on a new lockbox as the pause proxy (owner), simulating a prior spell.
-    function _presetRoute(address oft, uint32 eid, uint256 inLimit, uint256 outLimit) internal {
-        RateLimitConfig[] memory inb = new RateLimitConfig[](1);
-        RateLimitConfig[] memory out = new RateLimitConfig[](1);
-        inb[0] = RateLimitConfig({eid: eid, window: 1 days, limit: inLimit});
-        out[0] = RateLimitConfig({eid: eid, window: 1 days, limit: outLimit});
-        vm.prank(PAUSE_PROXY);
-        OFTAdapterLike(oft).setRateLimits(inb, out);
     }
 
     function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
