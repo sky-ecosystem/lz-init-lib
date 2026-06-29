@@ -405,10 +405,10 @@ contract LZAvaxMigrationInitTest is Test {
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
     }
 
-    // USDS -> Avalanche send params: full amount, no slippage, enforced options apply (empty extraOptions).
-    function _usdsSendParam(address to, uint256 amount) internal pure returns (SendParam memory) {
+    // OFT send params: full amount, no slippage, enforced options apply (empty extraOptions).
+    function _usdsSendParam(uint32 dstEid, address to, uint256 amount) internal pure returns (SendParam memory) {
         return SendParam({
-            dstEid: AVAX_EID, to: bytes32(uint256(uint160(to))), amountLD: amount, minAmountLD: amount,
+            dstEid: dstEid, to: bytes32(uint256(uint160(to))), amountLD: amount, minAmountLD: amount,
             extraOptions: "", composeMsg: "", oftCmd: ""
         });
     }
@@ -426,20 +426,34 @@ contract LZAvaxMigrationInitTest is Test {
         deal(USDS, user, amount);
         vm.deal(user, 10 ether);
 
-        SendParam memory sp = _usdsSendParam(user, amount);
+        SendParam memory sp = _usdsSendParam(AVAX_EID, user, amount);
         vm.startPrank(user);
         TokenLike(USDS).approve(newUsdsOft, amount);
         MessagingFee memory fee = SkyOFTAdapter(newUsdsOft).quoteSend(sp, false);
         SkyOFTAdapter(newUsdsOft).send{value: fee.nativeFee}(sp, fee, user);
         vm.stopPrank();
 
-        // Locked on top of the migrated backing.
+        // Forward: locked on the L1 lockbox (on top of the migrated backing).
         assertEq(TokenLike(USDS).balanceOf(user),    0);
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000 + amount);
 
         bridge.relayMessagesToDestination(true, newUsdsOft, avaxUsds.oft);
         bridge.destination.selectFork();
-        assertEq(TokenLike(AVAX_USDS).balanceOf(user), amount);
+        assertEq(TokenLike(AVAX_USDS).balanceOf(user), amount);  // minted on Avalanche
+
+        // Return: burn on Avalanche -> unlock on L1.
+        vm.deal(user, 10 ether);
+        SendParam memory back = _usdsSendParam(ETH_EID, user, amount);
+        vm.startPrank(user);
+        TokenLike(AVAX_USDS).approve(avaxUsds.oft, amount);  // adapter burns via Usds.burn(user, amount)
+        MessagingFee memory backFee = SkyOFTAdapter(avaxUsds.oft).quoteSend(back, false);
+        SkyOFTAdapter(avaxUsds.oft).send{value: backFee.nativeFee}(back, backFee, user);
+        vm.stopPrank();
+        assertEq(TokenLike(AVAX_USDS).balanceOf(user), 0);  // burned
+
+        bridge.relayMessagesToSource(true, avaxUsds.oft, newUsdsOft);
+        assertEq(TokenLike(USDS).balanceOf(user),       amount);                 // unlocked on L1
+        assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);  // lockbox back to backing
     }
 
     // The global (SENTINEL) outbound cap binds even when the per-eid cap is permissive.
@@ -456,7 +470,7 @@ contract LZAvaxMigrationInitTest is Test {
         deal(USDS, user, amount);
         vm.deal(user, 10 ether);
 
-        SendParam memory sp = _usdsSendParam(user, amount);
+        SendParam memory sp = _usdsSendParam(AVAX_EID, user, amount);
         vm.startPrank(user);
         TokenLike(USDS).approve(newUsdsOft, amount);
         MessagingFee memory fee = SkyOFTAdapter(newUsdsOft).quoteSend(sp, false);
