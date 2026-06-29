@@ -32,12 +32,10 @@ import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendPar
 import { SendSideDeployer, CCIPDVNCfg, CCIPDVNAdapter } from "./mocks/SendSideDeployerFlat.sol";
 import { L2GovernanceRelay } from "./mocks/L2GovernanceRelay.sol";
 
-interface ChainlogReadLike { function getAddress(bytes32) external view returns (address); }
-interface ChainlogSetLike  { function setAddress(bytes32, address) external; }
-interface WardsLike        { function wards(address) external view returns (uint256); }
-interface TokenLike        { function balanceOf(address) external view returns (uint256); function approve(address spender, uint256 amount) external returns (bool); }
-interface GovSenderLike    { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
-interface OwnableLike      { function owner() external view returns (address); }
+interface ChainlogLike  { function getAddress(bytes32) external view returns (address); function setAddress(bytes32, address) external; }
+interface TokenLike     { function balanceOf(address) external view returns (uint256); function wards(address) external view returns (uint256); function approve(address spender, uint256 amount) external returns (bool); }
+interface GovSenderLike { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
+interface OwnableLike   { function owner() external view returns (address); }
 
 // Cross-chain fork test: real mainnet + Avalanche forks, the real LZ relay/endpoints, real gov
 // bridge / tokens / old adapters, and the real audited V2 adapters (flattened in ./mocks) deployed
@@ -47,7 +45,7 @@ contract LZAvaxMigrationInitTest is Test {
     using DomainHelpers   for *;
     using LZBridgeTesting for *;
 
-    ChainlogReadLike constant chainlog = ChainlogReadLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
+    ChainlogLike constant chainlog = ChainlogLike(0xdA0Ab1e0017DEbCd72Be8599041a2aa3bA7e740F);
 
     uint32 constant ETH_EID  = 30101;
     uint32 constant AVAX_EID = 30106;
@@ -93,8 +91,8 @@ contract LZAvaxMigrationInitTest is Test {
     address   newSusdsOft;
     OftConfig usdsLockboxCfg;
     OftConfig susdsLockboxCfg;
-    // The gov receiver's current live receive ULN (read in setUp); the migration re-installs it.
-    UlnConfig govRecvUln;
+    // The recv ULN the migration installs on the gov receiver (built in setUp; differs from the live set).
+    UlnConfig newRecvUln;
 
     function setUp() public {
         mainnet     = getChain("mainnet").createSelectFork(25337000);
@@ -107,14 +105,17 @@ contract LZAvaxMigrationInitTest is Test {
 
         // Deploy every new adapter proxy first, so the deployer can then wire the real mutual peers
         // (each L1 lockbox and its L2 remote reference the other), exactly as production would. Both the
-        // L1 and L2 OFT sides use the same 4/4 required LZ-aligned DVN set (per chain).
+        // L1 and L2 OFT sides use the same 4/4 required DVN set (per chain).
         bridge.destination.selectFork();
         l2Spell   = new LZAvaxMigrationL2Spell();
         newRelay  = address(new L2GovernanceRelay(ETH_EID, AVAX_GOV_RECEIVER, GOV_RELAY, 1 days, 7 days, new address[](0)));
         address avaxUsdsOft  = _deployOftProxy(false, AVAX_USDS);
         address avaxSusdsOft = _deployOftProxy(false, AVAX_SUSDS);
-        // The migration re-installs the gov receiver's current 4-of-7 optional recv set unchanged.
-        govRecvUln = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
+        // Target recv config: the live LZ-aligned wing + 4 CCIP + 4 multisig replica placeholders, 8-of-15.
+        newRecvUln = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
+        for (uint160 i; i < 8; ++i) newRecvUln.optionalDVNs.push(address(type(uint160).max - 8 + i));
+        newRecvUln.optionalDVNCount     = uint8(newRecvUln.optionalDVNs.length);
+        newRecvUln.optionalDVNThreshold = 8;
 
         mainnet.selectFork();
         newUsdsOft  = _deployOftProxy(true, chainlog.getAddress("USDS"));
@@ -229,20 +230,16 @@ contract LZAvaxMigrationInitTest is Test {
         vm.deal(GOV_RELAY, 1 ether);
         vm.startPrank(PAUSE_PROXY);
         LZInit.relayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell),
-            abi.encodeCall(LZAvaxMigrationL2Spell.migrateAvaxRemote, (govRecvUln, newRelay, avaxUsds, avaxSusds)),
+            abi.encodeCall(LZAvaxMigrationL2Spell.migrateAvaxRemote, (newRecvUln, newRelay, avaxUsds, avaxSusds)),
             800_000, 1 ether);
         vm.stopPrank();
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
 
         bridge.destination.selectFork();
 
-        // Gov receiver's receive DVN set installed: the live 4-of-7 optional set, unchanged. Prod
-        // hardening additionally inserts 4 CCIP + 4 multisig DVNReplica slots (see lz-dvn-broadcaster);
-        // force-delivery here bypasses recv verification, so the replica fan-out isn't modeled.
+        // Gov receiver now holds the migration's target recv config (which differs from the live set).
         UlnConfig memory got = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
-        assertEq(got.optionalDVNCount,     7);
-        assertEq(got.optionalDVNThreshold, 4);
-        assertEq(got.requiredDVNCount,     govRecvUln.requiredDVNCount);  // 4-of-7 optional set round-trips
+        assertEq(keccak256(abi.encode(got)), keccak256(abi.encode(newRecvUln)));
 
         // New remote OFTs activated for the Ethereum route (per-eid rate limits flipped on).
         assertEq(_inLimit(avaxUsds.oft,   ETH_EID), 5_000_000e18);
@@ -251,14 +248,14 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(_outLimit(avaxSusds.oft, ETH_EID), 2_000_000e18);
 
         // Token authority handed over.
-        assertEq(WardsLike(AVAX_USDS).wards(avaxUsds.oft),        1);
-        assertEq(WardsLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
-        assertEq(WardsLike(AVAX_USDS).wards(newRelay),            1);
-        assertEq(WardsLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY),   0);
-        assertEq(WardsLike(AVAX_SUSDS).wards(avaxSusds.oft),      1);
-        assertEq(WardsLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
-        assertEq(WardsLike(AVAX_SUSDS).wards(newRelay),           1);
-        assertEq(WardsLike(AVAX_SUSDS).wards(AVAX_L2_GOV_RELAY),  0);
+        assertEq(TokenLike(AVAX_USDS).wards(avaxUsds.oft),        1);
+        assertEq(TokenLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
+        assertEq(TokenLike(AVAX_USDS).wards(newRelay),            1);
+        assertEq(TokenLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY),   0);
+        assertEq(TokenLike(AVAX_SUSDS).wards(avaxSusds.oft),      1);
+        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
+        assertEq(TokenLike(AVAX_SUSDS).wards(newRelay),           1);
+        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_L2_GOV_RELAY),  0);
 
         // Delegate + ownership handed to the new relay (gov receiver + both adapters).
         assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(),          newRelay);
@@ -326,7 +323,7 @@ contract LZAvaxMigrationInitTest is Test {
         m.legacyCLKey   = "USDS_OFT_SOLANA";
         m.susds         = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
-        m.recvUlnCfg      = govRecvUln;
+        m.recvUlnCfg      = newRecvUln;
         m.avaxUsds        = avaxUsds;
         m.avaxSusds       = avaxSusds;
         m.l2Spell         = address(l2Spell);
@@ -377,12 +374,12 @@ contract LZAvaxMigrationInitTest is Test {
         // Deliver the relayed Avalanche half and spot-check it executed.
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
         bridge.destination.selectFork();
-        assertEq(WardsLike(AVAX_USDS).wards(avaxUsds.oft),     1);
-        assertEq(WardsLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY), 0);
+        assertEq(TokenLike(AVAX_USDS).wards(avaxUsds.oft),     1);
+        assertEq(TokenLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY), 0);
         assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(), newRelay);
         // Old adapters (hardcoded constants) were denied.
-        assertEq(WardsLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
-        assertEq(WardsLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
+        assertEq(TokenLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
+        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
     }
 
     // --- e2e: bridge USDS L1 -> Avalanche through the migrated adapters ---
@@ -525,9 +522,9 @@ contract LZAvaxMigrationInitTest is Test {
         _presetRoute(newUsdsOft,  OFTAdapterLike(newUsdsOft).SENTINEL_EID(),  15_000_000e18, 14_000_000e18); // Base-era global cap (overwritten)
         _presetRoute(newSusdsOft, OFTAdapterLike(newSusdsOft).SENTINEL_EID(), 17_000_000e18, 16_000_000e18);
         vm.startPrank(PAUSE_PROXY);
-        ChainlogSetLike(address(chainlog)).setAddress("USDS_OFT",        newUsdsOft);
-        ChainlogSetLike(address(chainlog)).setAddress("SUSDS_OFT",       newSusdsOft);
-        ChainlogSetLike(address(chainlog)).setAddress("USDS_OFT_SOLANA", OLD_L1_USDS_OFT);
+        chainlog.setAddress("USDS_OFT",        newUsdsOft);
+        chainlog.setAddress("SUSDS_OFT",       newSusdsOft);
+        chainlog.setAddress("USDS_OFT_SOLANA", OLD_L1_USDS_OFT);
         vm.stopPrank();
 
         // --- Avalanche migration runs second ---
