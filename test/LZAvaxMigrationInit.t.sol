@@ -580,18 +580,39 @@ contract LZAvaxMigrationInitTest is Test {
     function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
         mainnet.selectFork();
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
-        // A new optional set overlapping the current on-chain set by fewer than MIN_DVN_OVERLAP fails
-        // the guard. One below-range / one match / one above-range (sorted) also drives every arm of
-        // the two-pointer merge: '<' (++i), '==' (match), '>' (++j).
+        // Overlap of 3, just under the guard's minimum of MIN_DVN_OVERLAP (4). The addresses sorting
+        // before and after all the current DVNs (around the 3 matches) also make the overlap-counting
+        // merge hit every branch: '<' (++i), '==' (match), '>' (++j).
         address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
         address[] memory oldOpt = UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID).optionalDVNs;
-        address[] memory dvns = new address[](3);
-        dvns[0] = address(0x1);               // below all real DVNs
-        dvns[1] = oldOpt[0];                   // a match
-        dvns[2] = address(type(uint160).max);  // above all real DVNs
+        address[] memory dvns = new address[](5);
+        dvns[0] = address(0x1);                // sorts below every current DVN
+        dvns[1] = oldOpt[0];
+        dvns[2] = oldOpt[1];
+        dvns[3] = oldOpt[2];                    // three matches
+        dvns[4] = address(type(uint160).max);   // sorts above every current DVN
         m.sendUlnCfg.optionalDVNs = dvns;
         vm.expectRevert(bytes("LZAvaxMigrationInit/insufficient-dvn-overlap"));
         this.runMigration(m);
+    }
+
+    function test_migrateAvax_acceptsMinimumDvnOverlap() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        // Keep exactly MIN_DVN_OVERLAP (4) of the current optional set + the CCIP adapter: meets the guard.
+        address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
+        address[] memory oldOpt = UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID).optionalDVNs;
+        address ccip = m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex];
+        address[] memory keep = new address[](4);
+        for (uint256 i; i < 4; ++i) keep[i] = oldOpt[i];
+        (m.sendUlnCfg.optionalDVNs, m.ccipDvnIndex) = _insertSorted(keep, ccip);
+        m.sendUlnCfg.optionalDVNCount = uint8(m.sendUlnCfg.optionalDVNs.length);
+
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.startPrank(PAUSE_PROXY);
+        LZAvaxMigrationInit.migrateAvax(m);  // overlap == MIN_DVN_OVERLAP, does not revert
+        vm.stopPrank();
+        assertEq(chainlog.getAddress("USDS_OFT"), m.usds.oft);  // ran to completion
     }
 
     function test_migrateAvax_revertsIfCcipSendLibMissingRole() public {
