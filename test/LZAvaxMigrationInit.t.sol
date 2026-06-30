@@ -41,8 +41,16 @@ interface TokenLike {
     function wards(address) external view returns (uint256);
     function approve(address spender, uint256 amount) external returns (bool);
 }
-interface GovSenderLike { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
-interface OwnableLike   { function owner() external view returns (address); }
+interface GovSenderLike  { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
+interface OwnableLike    { function owner() external view returns (address); }
+interface PauseProxyLike { function exec(address usr, bytes calldata fax) external returns (bytes memory); }
+
+// A spell that uses the library in its linked form, via migrateAvaxLinked.
+contract LinkedSpellHarness {
+    function run(AvaxMigration memory m) external {
+        LZAvaxMigrationInit.migrateAvaxLinked(m);
+    }
+}
 
 // Cross-chain fork test: real mainnet + Avalanche forks, the real LZ relay/endpoints, real gov
 // bridge / tokens / old adapters, and the real audited V2 adapters (flattened in ./mocks) deployed
@@ -84,6 +92,7 @@ contract LZAvaxMigrationInitTest is Test {
     address PAUSE_PROXY;
     address GOV_SENDER;
     address GOV_RELAY;
+    address USDS;
 
     Domain    mainnet;
     Bridge    bridge;
@@ -106,6 +115,7 @@ contract LZAvaxMigrationInitTest is Test {
         PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
         GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
         GOV_RELAY   = chainlog.getAddress("LZ_GOV_RELAY");
+        USDS        = chainlog.getAddress("USDS");
 
         Domain memory avalanche = getChain("avalanche").createFork(88200000);
         bridge = LZBridgeTesting.createLZBridge(mainnet, avalanche);
@@ -125,7 +135,7 @@ contract LZAvaxMigrationInitTest is Test {
         newRecvUln.optionalDVNThreshold = 8;
 
         mainnet.selectFork();
-        newUsdsOft  = _deployOftProxy(true, chainlog.getAddress("USDS"));
+        newUsdsOft  = _deployOftProxy(true, USDS);
         newSusdsOft = _deployOftProxy(true, chainlog.getAddress("SUSDS"));
         // L1 lockboxes: wired for the Avalanche route to their remote adapter, owned by the pause proxy.
         // Libs/executor copied from each token's old L1 adapter; DVNs are the 4/4 Ethereum set.
@@ -355,7 +365,6 @@ contract LZAvaxMigrationInitTest is Test {
 
     function test_migrateAvax() public {
         mainnet.selectFork();
-        address USDS    = chainlog.getAddress("USDS");
         address oldUsds = chainlog.getAddress("USDS_OFT");  // real lockbox, owned by PAUSE_PROXY
         uint256 oldUsdsBalBefore = TokenLike(USDS).balanceOf(oldUsds);
 
@@ -397,6 +406,29 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
     }
 
+    function test_migrateAvax_linked() public {
+        mainnet.selectFork();
+        address oldUsds = chainlog.getAddress("USDS_OFT");
+        uint256 oldUsdsBalBefore = TokenLike(USDS).balanceOf(oldUsds);
+
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        vm.deal(GOV_RELAY, 1 ether);
+        LinkedSpellHarness spell = new LinkedSpellHarness();
+        vm.prank(chainlog.getAddress("MCD_PAUSE"));
+        PauseProxyLike(PAUSE_PROXY).exec(address(spell), abi.encodeCall(LinkedSpellHarness.run, (m)));
+
+        // Same headline effects as the embedded path: chainlog repointed, backing moved, old route
+        // severed, and the gov whitelist swapped to the new relay.
+        assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
+        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), oldUsds);
+        assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
+        assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
+        assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
+        assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
+        assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
+        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(AVAX_L2_GOV_RELAY)))));
+    }
+
     // --- e2e: bridge USDS L1 -> Avalanche through the migrated adapters ---
 
     // Build + run with the given USDS rate limits, then relay the Avalanche half; leaves the fork on Avalanche.
@@ -422,7 +454,6 @@ contract LZAvaxMigrationInitTest is Test {
 
     function test_migrateAvax_e2eUsdsBridge() public {
         mainnet.selectFork();
-        address USDS = chainlog.getAddress("USDS");
         RateLimits memory perEidLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18, outboundWindow: 1 days, outboundLimit: 4_000_000e18});
         RateLimits memory globalLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 9_000_000e18, outboundWindow: 1 days, outboundLimit: 8_000_000e18});
         _migrateAvaxWithUsdsLimits(perEidLimits, globalLimits);
@@ -466,7 +497,6 @@ contract LZAvaxMigrationInitTest is Test {
     // The global (SENTINEL) outbound cap binds even when the per-eid cap is permissive.
     function test_migrateAvax_e2eRevertsOverGlobalCap() public {
         mainnet.selectFork();
-        address USDS = chainlog.getAddress("USDS");
         RateLimits memory perEidLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18, outboundWindow: 1 days, outboundLimit: 5_000_000e18});
         RateLimits memory globalLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 9_000_000e18, outboundWindow: 1 days, outboundLimit: 100e18});
         _migrateAvaxWithUsdsLimits(perEidLimits, globalLimits);
@@ -544,7 +574,6 @@ contract LZAvaxMigrationInitTest is Test {
     // idempotent, and funding still drains the hardcoded legacy lockbox.
     function test_migrateAvax_notFirstL2() public {
         mainnet.selectFork();
-        address USDS            = chainlog.getAddress("USDS");
         uint256 legacyBalBefore = TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT);
 
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});

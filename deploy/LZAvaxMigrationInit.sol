@@ -195,6 +195,13 @@ library LZAvaxMigrationInit {
         GovOAppSenderLike(govSender).setCanCallTarget(govRelay, AVAX_EID, bytes32(uint256(uint160(OLD_AVAX_GOV_RELAY))), false);
     }
 
+    /// @notice Entry point for using the library in linked form: deploy it and link the spell against
+    ///         its address rather than embedding it. Spells that embed the library call migrateAvax
+    ///         directly. See README "Deployment model: embedded (default) or linked".
+    function migrateAvaxLinked(AvaxMigration memory m) public {
+        migrateAvax(m);
+    }
+
     /// @dev Require the new optional DVN set to keep >= MIN_DVN_OVERLAP of the current (4/7) set: a
     ///      LZ quirk requires a DVN that has been assigned a verification job to still be present at
     ///      the end of the block. Both sets are sorted ascending (LZ-enforced); the loop below

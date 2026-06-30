@@ -130,6 +130,23 @@ Preconditions (deployer): the new relay and the new OFT V2 adapters (USDS + sUSD
 
 Avalanche is expected to be the first L2 brought up on the V2 OFTs. If it isn't, it is assumed that the earlier L2's spell either hasn't updated the chainlog yet, or updated it consistently, with `USDS_OFT`/`SUSDS_OFT` pointing to the new V2 OFTs and the legacy key (`legacyCLKey`, e.g. `USDS_OFT_SOLANA`) to the old OFT. Under that assumption the spell still works, just redundantly: `migrateAvax`'s checks re-verify some of the already-checked state and the chainlog writes rewrite the same values, while the Avalanche route is set fresh and the global caps overwritten. The global-cap inputs must then be the system-wide totals across every L2 on the new lockbox supported so far (excluding Solana, which stays on the old USDS adapter).
 
+#### Deployment model: embedded (default) or linked
+
+By default the spell calls `LZAvaxMigrationInit.migrateAvax(m)`, embedding the migration in the spell. No prior deployment or linker setup is needed.
+
+If the spell is too large to embed it, call `LZAvaxMigrationInit.migrateAvaxLinked(m)` instead (same arguments and behaviour) and link against a pre-deployed copy of the library:
+
+1. Deploy the library (self-contained, no further linking required):
+   ```shell
+   forge create deploy/LZAvaxMigrationInit.sol:LZAvaxMigrationInit --rpc-url <mainnet_rpc> --private-key <key> --verify
+   ```
+2. In the spell repo's `foundry.toml`, link the deployed address (the source path must match its import path in that repo):
+   ```toml
+   libraries = ["<path>/LZAvaxMigrationInit.sol:LZAvaxMigrationInit:0x<deployed_address>"]
+   ```
+
+The Avalanche half is unaffected either way.
+
 ## Build
 
 ```shell
