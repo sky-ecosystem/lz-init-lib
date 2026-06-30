@@ -231,10 +231,6 @@ library LZAvaxMigrationInit {
         OftActivation memory avaxUsds,
         OftActivation memory avaxSusds
     ) internal {
-        // OFT token authority: rely the new adapters, deny the old ones.
-        TokenLike(AVAX_USDS).rely(avaxUsds.oft);   TokenLike(AVAX_USDS).deny(OLD_AVAX_USDS_OFT);
-        TokenLike(AVAX_SUSDS).rely(avaxSusds.oft); TokenLike(AVAX_SUSDS).deny(OLD_AVAX_SUSDS_OFT);
-
         // Activate the new remote OFTs for the Ethereum route.
         LZInit.activateOft(avaxUsds.oft,  ETH_EID, avaxUsds.cfg,  avaxUsds.rateLimits,  avaxUsds.rlAccountingType,  AVAX_USDS,  address(this));
         LZInit.activateOft(avaxSusds.oft, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this));
@@ -242,6 +238,12 @@ library LZAvaxMigrationInit {
         // Gov receiver: new receive DVN set (lib read from the endpoint).
         (address recvLib,) = EndpointLike(OAppLike(AVAX_GOV_RECEIVER).endpoint()).getReceiveLibrary(AVAX_GOV_RECEIVER, ETH_EID);
         LZInit.setUlnConfig(AVAX_GOV_RECEIVER, ETH_EID, recvLib, recvUlnCfg);
+
+        // Move token authority from the old OFTs to the new OFTs.
+        TokenLike(AVAX_USDS).rely(avaxUsds.oft);
+        TokenLike(AVAX_SUSDS).rely(avaxSusds.oft);
+        TokenLike(AVAX_USDS).deny(OLD_AVAX_USDS_OFT);
+        TokenLike(AVAX_SUSDS).deny(OLD_AVAX_SUSDS_OFT);
 
         // Move token authority from the old relay to the new relay.
         TokenLike(AVAX_USDS).rely(newRelay);
