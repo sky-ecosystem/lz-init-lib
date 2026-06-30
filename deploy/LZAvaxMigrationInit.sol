@@ -243,19 +243,17 @@ library LZAvaxMigrationInit {
         (address recvLib,) = EndpointLike(OAppLike(AVAX_GOV_RECEIVER).endpoint()).getReceiveLibrary(AVAX_GOV_RECEIVER, ETH_EID);
         LZInit.setUlnConfig(AVAX_GOV_RECEIVER, ETH_EID, recvLib, recvUlnCfg);
 
-        // Grant token authority to the new relay.
+        // Move token authority from the old relay to the new relay.
         TokenLike(AVAX_USDS).rely(newRelay);
         TokenLike(AVAX_SUSDS).rely(newRelay);
+        TokenLike(AVAX_USDS).deny(address(this));
+        TokenLike(AVAX_SUSDS).deny(address(this));
 
-        // Hand delegate + ownership to the new relay: gov receiver + both new adapters.
+        // Move delegate + ownership to the new relay: gov receiver + both new adapters.
         address[3] memory oapps = [AVAX_GOV_RECEIVER, avaxUsds.oft, avaxSusds.oft];
         for (uint256 i; i < oapps.length; ++i) {
             OAppLike(oapps[i]).setDelegate(newRelay);
             OAppLike(oapps[i]).transferOwnership(newRelay);
         }
-
-        // Old relay denies itself on the tokens.
-        TokenLike(AVAX_USDS).deny(address(this));
-        TokenLike(AVAX_SUSDS).deny(address(this));
     }
 }
