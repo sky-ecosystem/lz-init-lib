@@ -66,15 +66,15 @@ contract LZAvaxMigrationInitTest is Test {
     uint32 constant AVAX_EID = 30106;
 
     // The LZ EndpointV2 has the same address on Ethereum, Avalanche, and Base.
-    address constant ENDPOINT            = 0x1a44076050125825900e736c501f859c50fE728c;
-    address constant AVAX_L2_GOV_RELAY   = 0xe928885BCe799Ed933651715608155F01abA23cA; // old relay
-    address constant AVAX_GOV_RECEIVER   = 0x6fdd46947ca6903c8c159d1dF2012Bc7fC5cEeec;
-    address constant AVAX_USDS           = 0x86Ff09db814ac346a7C6FE2Cd648F27706D1D470;
-    address constant AVAX_SUSDS          = 0xb94D9613C7aAB11E548a327154Cc80eCa911B5c1;
-    address constant AVAX_OLD_USDS_OFT   = 0x4fec40719fD9a8AE3F8E20531669DEC5962D2619;
-    address constant AVAX_OLD_SUSDS_OFT  = 0x7297D4811f088FC26bC5475681405B99b41E1FF9;
-    address constant OLD_L1_USDS_OFT     = 0x1e1D42781FC170EF9da004Fb735f56F0276d01B8; // V1 L1 USDS lockbox
-    address constant OLD_L1_SUSDS_OFT    = 0x85A3FE4DA2a6cB98A5bdF62458B0dB8471B9f0f1; // V1 L1 sUSDS lockbox
+    address constant ENDPOINT           = 0x1a44076050125825900e736c501f859c50fE728c;
+    address constant OLD_AVAX_GOV_RELAY = 0xe928885BCe799Ed933651715608155F01abA23cA; // old relay
+    address constant AVAX_GOV_RECEIVER  = 0x6fdd46947ca6903c8c159d1dF2012Bc7fC5cEeec;
+    address constant AVAX_USDS          = 0x86Ff09db814ac346a7C6FE2Cd648F27706D1D470;
+    address constant AVAX_SUSDS         = 0xb94D9613C7aAB11E548a327154Cc80eCa911B5c1;
+    address constant OLD_AVAX_USDS_OFT  = 0x4fec40719fD9a8AE3F8E20531669DEC5962D2619;
+    address constant OLD_AVAX_SUSDS_OFT = 0x7297D4811f088FC26bC5475681405B99b41E1FF9;
+    address constant OLD_L1_USDS_OFT    = 0x1e1D42781FC170EF9da004Fb735f56F0276d01B8; // V1 L1 USDS lockbox
+    address constant OLD_L1_SUSDS_OFT   = 0x85A3FE4DA2a6cB98A5bdF62458B0dB8471B9f0f1; // V1 L1 sUSDS lockbox
 
     address constant ETH_DVN_HORIZEN     = 0x380275805876Ff19055EA900CDb2B46a94ecF20D;
     address constant ETH_DVN_LZ_LABS     = 0x589dEDbD617e0CBcB916A9223F4d1300c294236b;
@@ -148,14 +148,14 @@ contract LZAvaxMigrationInitTest is Test {
         bridge.destination.selectFork();
         avaxUsds = OftActivation({
             oft: avaxUsdsOft,
-            cfg: _wireOft(avaxUsdsOft, ETH_EID, AVAX_OLD_USDS_OFT, _avaxOftDvns(), newUsdsOft, AVAX_L2_GOV_RELAY),
-            rateLimits: RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18, outboundWindow: 1 days, outboundLimit: 4_000_000e18}),
+            cfg: _wireOft(avaxUsdsOft, ETH_EID, OLD_AVAX_USDS_OFT, _avaxOftDvns(), newUsdsOft, OLD_AVAX_GOV_RELAY),
+            rateLimits: RateLimits({inboundWindow: 1 hours, inboundLimit: 5_000_000e18, outboundWindow: 2 hours, outboundLimit: 4_000_000e18}),
             rlAccountingType: 0
         });
         avaxSusds = OftActivation({
             oft: avaxSusdsOft,
-            cfg: _wireOft(avaxSusdsOft, ETH_EID, AVAX_OLD_SUSDS_OFT, _avaxOftDvns(), newSusdsOft, AVAX_L2_GOV_RELAY),
-            rateLimits: RateLimits({inboundWindow: 1 days, inboundLimit: 3_000_000e18, outboundWindow: 1 days, outboundLimit: 2_000_000e18}),
+            cfg: _wireOft(avaxSusdsOft, ETH_EID, OLD_AVAX_SUSDS_OFT, _avaxOftDvns(), newSusdsOft, OLD_AVAX_GOV_RELAY),
+            rateLimits: RateLimits({inboundWindow: 3 hours, inboundLimit: 3_000_000e18, outboundWindow: 4 hours, outboundLimit: 2_000_000e18}),
             rlAccountingType: 0
         });
     }
@@ -240,48 +240,9 @@ contract LZAvaxMigrationInitTest is Test {
     function _outLimit(address oft, uint32 eid) internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).outboundRateLimits(eid); }
     function _inLimit(address oft, uint32 eid)  internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).inboundRateLimits(eid); }
 
-    // --- migrateAvaxRemote: Avalanche side via the relay ---
-
-    function test_migrateAvaxRemote() public {
-        mainnet.selectFork();
-        vm.deal(GOV_RELAY, 1 ether);
-        vm.startPrank(PAUSE_PROXY);
-        LZInit.relayToL2(AVAX_EID, AVAX_L2_GOV_RELAY, address(l2Spell),
-            abi.encodeCall(LZAvaxMigrationL2Spell.migrateAvaxRemote, (newRecvUln, newRelay, avaxUsds, avaxSusds)),
-            800_000, 1 ether);
-        vm.stopPrank();
-        bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
-
-        bridge.destination.selectFork();
-
-        // Gov receiver now holds the migration's target recv config (which differs from the live set).
-        UlnConfig memory got = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
-        assertEq(keccak256(abi.encode(got)), keccak256(abi.encode(newRecvUln)));
-
-        // New remote OFTs activated for the Ethereum route (per-eid rate limits flipped on).
-        assertEq(_inLimit(avaxUsds.oft,   ETH_EID), 5_000_000e18);
-        assertEq(_outLimit(avaxUsds.oft,  ETH_EID), 4_000_000e18);
-        assertEq(_inLimit(avaxSusds.oft,  ETH_EID), 3_000_000e18);
-        assertEq(_outLimit(avaxSusds.oft, ETH_EID), 2_000_000e18);
-
-        // Token authority handed over.
-        assertEq(TokenLike(AVAX_USDS).wards(avaxUsds.oft),        1);
-        assertEq(TokenLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
-        assertEq(TokenLike(AVAX_USDS).wards(newRelay),            1);
-        assertEq(TokenLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY),   0);
-        assertEq(TokenLike(AVAX_SUSDS).wards(avaxSusds.oft),      1);
-        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
-        assertEq(TokenLike(AVAX_SUSDS).wards(newRelay),           1);
-        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_L2_GOV_RELAY),  0);
-
-        // Delegate + ownership handed to the new relay (gov receiver + both adapters).
-        assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(),              newRelay);
-        assertEq(EndpointLike(ENDPOINT).delegates(AVAX_GOV_RECEIVER), newRelay);
-        assertEq(OFTAdapterLike(avaxUsds.oft).owner(),               newRelay);
-        assertEq(EndpointLike(ENDPOINT).delegates(avaxUsds.oft),     newRelay);
-        assertEq(OFTAdapterLike(avaxSusds.oft).owner(),              newRelay);
-        assertEq(EndpointLike(ENDPOINT).delegates(avaxSusds.oft),    newRelay);
-    }
+    // window field (2nd) of the stored rate-limit bucket.
+    function _outWindow(address oft, uint32 eid) internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).outboundRateLimits(eid); }
+    function _inWindow(address oft, uint32 eid)  internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).inboundRateLimits(eid); }
 
     // --- migrateAvax: full L1 spell (funding / chainlog / whitelist) + relay to Avalanche ---
 
@@ -334,19 +295,19 @@ contract LZAvaxMigrationInitTest is Test {
         cfg.optionalDVNCount = uint8(cfg.optionalDVNs.length);
         m.sendUlnCfg = cfg;
         }
-        m.newL2GovRelay   = newRelay;
+        m.newL2GovRelay     = newRelay;
         m.ccipAllowlistSize = 1;  // SendSideDeployer allowlists exactly the gov sender
-        m.usds          = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
-        m.usdsGlobalLimits = _zeroRL();
-        m.legacyCLKey   = "USDS_OFT_SOLANA";
-        m.susds         = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.usds              = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.usdsGlobalLimits  = _zeroRL();
+        m.legacyCLKey       = "USDS_OFT_SOLANA";
+        m.susds             = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
-        m.recvUlnCfg      = newRecvUln;
-        m.avaxUsds        = avaxUsds;
-        m.avaxSusds       = avaxSusds;
-        m.l2Spell         = address(l2Spell);
-        m.gas             = 800_000;
-        m.maxFee          = 1 ether;
+        m.recvUlnCfg        = newRecvUln;
+        m.avaxUsds          = avaxUsds;
+        m.avaxSusds         = avaxSusds;
+        m.l2Spell           = address(l2Spell);
+        m.gas               = 800_000;
+        m.maxFee            = 1 ether;
     }
 
     function _zeroRL() internal pure returns (RateLimits memory r) {}
@@ -366,7 +327,8 @@ contract LZAvaxMigrationInitTest is Test {
     function test_migrateAvax() public {
         mainnet.selectFork();
         address oldUsds = chainlog.getAddress("USDS_OFT");  // real lockbox, owned by PAUSE_PROXY
-        uint256 oldUsdsBalBefore = TokenLike(USDS).balanceOf(oldUsds);
+        uint256 oldUsdsBalBefore   = TokenLike(USDS).balanceOf(oldUsds);
+        bytes32 oldSusdsPeerBefore = OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID);
 
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
         vm.deal(GOV_RELAY, 1 ether);
@@ -374,59 +336,85 @@ contract LZAvaxMigrationInitTest is Test {
         LZAvaxMigrationInit.migrateAvax(m);
         vm.stopPrank();
 
-        // Chainlog repointed; old USDS adapter kept under the Solana key.
-        assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
-        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), oldUsds);
-        assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
-
-        // USDS backing moved old -> new (frozen Avalanche supply); old keeps the rest (Solana).
+        // USDS swap: backing moved old -> new (frozen Avalanche supply); old keeps the rest (Solana).
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
         assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
 
-        // Old USDS adapter's Avalanche route severed: peer cleared + rate limits zeroed.
+        // USDS swap: old adapter's Avalanche route severed (peer cleared + rate limits zeroed).
         assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
         assertEq(_inLimit(oldUsds,  AVAX_EID), 0);
         assertEq(_outLimit(oldUsds, AVAX_EID), 0);
+
+        // USDS swap: chainlog repointed, old adapter kept under the Solana key.
+        assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
+        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), oldUsds);
+
+        // sUSDS swap: chainlog repointed; old adapter's Avalanche route left intact (not severed, unlike USDS).
+        assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
+        assertEq(OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID), oldSusdsPeerBefore);
 
         // Gov bridge: new send DVN set installed + relay whitelist swapped (old -> new relay).
         address sendLib = EndpointLike(OAppLike(GOV_SENDER).endpoint()).getSendLibrary(GOV_SENDER, AVAX_EID);
         assertEq(keccak256(abi.encode(UlnLike(sendLib).getAppUlnConfig(GOV_SENDER, AVAX_EID))),
                  keccak256(abi.encode(m.sendUlnCfg)));
         assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
-        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(AVAX_L2_GOV_RELAY)))));
+        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(OLD_AVAX_GOV_RELAY)))));
 
-        // Deliver the relayed Avalanche half and spot-check it executed.
+        // Deliver + run the relayed Avalanche half, then assert its full end state.
         bridge.relayMessagesToDestination(true, GOV_SENDER, AVAX_GOV_RECEIVER);
         bridge.destination.selectFork();
-        assertEq(TokenLike(AVAX_USDS).wards(avaxUsds.oft),     1);
-        assertEq(TokenLike(AVAX_USDS).wards(AVAX_L2_GOV_RELAY), 0);
-        assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(), newRelay);
-        // Old adapters (hardcoded constants) were denied.
-        assertEq(TokenLike(AVAX_USDS).wards(AVAX_OLD_USDS_OFT),   0);
-        assertEq(TokenLike(AVAX_SUSDS).wards(AVAX_OLD_SUSDS_OFT), 0);
+
+        // New remote OFTs activated for the Ethereum route (per-eid rate limits flipped on).
+        assertEq(_inLimit(avaxUsds.oft,    ETH_EID), avaxUsds.rateLimits.inboundLimit);
+        assertEq(_inWindow(avaxUsds.oft,   ETH_EID), avaxUsds.rateLimits.inboundWindow);
+        assertEq(_outLimit(avaxUsds.oft,   ETH_EID), avaxUsds.rateLimits.outboundLimit);
+        assertEq(_outWindow(avaxUsds.oft,  ETH_EID), avaxUsds.rateLimits.outboundWindow);
+        assertEq(_inLimit(avaxSusds.oft,   ETH_EID), avaxSusds.rateLimits.inboundLimit);
+        assertEq(_inWindow(avaxSusds.oft,  ETH_EID), avaxSusds.rateLimits.inboundWindow);
+        assertEq(_outLimit(avaxSusds.oft,  ETH_EID), avaxSusds.rateLimits.outboundLimit);
+        assertEq(_outWindow(avaxSusds.oft, ETH_EID), avaxSusds.rateLimits.outboundWindow);
+
+        // Gov receiver holds the migration's target recv config (differs from the live set).
+        assertEq(keccak256(abi.encode(_readRecvUln(AVAX_GOV_RECEIVER, ETH_EID))), keccak256(abi.encode(newRecvUln)));
+
+        // Token authority moved from the old OFTs to the new OFTs.
+        assertEq(TokenLike(AVAX_USDS).wards(avaxUsds.oft),        1);
+        assertEq(TokenLike(AVAX_SUSDS).wards(avaxSusds.oft),      1);
+        assertEq(TokenLike(AVAX_USDS).wards(OLD_AVAX_USDS_OFT),   0);
+        assertEq(TokenLike(AVAX_SUSDS).wards(OLD_AVAX_SUSDS_OFT), 0);
+
+        // Token authority moved from the old relay to the new relay.
+        assertEq(TokenLike(AVAX_USDS).wards(newRelay),           1);
+        assertEq(TokenLike(AVAX_SUSDS).wards(newRelay),          1);
+        assertEq(TokenLike(AVAX_USDS).wards(OLD_AVAX_GOV_RELAY),  0);
+        assertEq(TokenLike(AVAX_SUSDS).wards(OLD_AVAX_GOV_RELAY), 0);
+
+        // Delegate + ownership moved to the new relay (gov receiver + both adapters).
+        assertEq(OwnableLike(AVAX_GOV_RECEIVER).owner(),              newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(AVAX_GOV_RECEIVER), newRelay);
+        assertEq(OFTAdapterLike(avaxUsds.oft).owner(),                newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(avaxUsds.oft),      newRelay);
+        assertEq(OFTAdapterLike(avaxSusds.oft).owner(),               newRelay);
+        assertEq(EndpointLike(ENDPOINT).delegates(avaxSusds.oft),     newRelay);
     }
 
     function test_migrateAvax_linked() public {
         mainnet.selectFork();
-        address oldUsds = chainlog.getAddress("USDS_OFT");
-        uint256 oldUsdsBalBefore = TokenLike(USDS).balanceOf(oldUsds);
-
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+
+        // Before: new relay not yet callable, old relay still callable.
+        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
+        assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(OLD_AVAX_GOV_RELAY)))));
+
         vm.deal(GOV_RELAY, 1 ether);
         LinkedSpellHarness spell = new LinkedSpellHarness();
         vm.prank(chainlog.getAddress("MCD_PAUSE"));
         PauseProxyLike(PAUSE_PROXY).exec(address(spell), abi.encodeCall(LinkedSpellHarness.run, (m)));
 
-        // Same headline effects as the embedded path: chainlog repointed, backing moved, old route
-        // severed, and the gov whitelist swapped to the new relay.
-        assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
-        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), oldUsds);
-        assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
-        assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
-        assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
-        assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
+        // Only migrateAvax's final effect (the gov whitelist swap) is checked here; the rest is
+        // asserted in test_migrateAvax.
         assertTrue (GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(newRelay)))));
-        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(AVAX_L2_GOV_RELAY)))));
+        assertFalse(GovSenderLike(GOV_SENDER).canCallTarget(GOV_RELAY, AVAX_EID, bytes32(uint256(uint160(OLD_AVAX_GOV_RELAY)))));
     }
 
     // --- e2e: bridge USDS L1 -> Avalanche through the migrated adapters ---
@@ -578,10 +566,10 @@ contract LZAvaxMigrationInitTest is Test {
 
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
         // Non-zero Avalanche per-eid limits and system-wide (Base + Avalanche) global caps.
-        m.usds.rateLimits   = RateLimits({inboundWindow: 1 days, inboundLimit: 5_000_000e18,  outboundWindow: 1 days, outboundLimit: 4_000_000e18});
-        m.susds.rateLimits  = RateLimits({inboundWindow: 1 days, inboundLimit: 11_000_000e18, outboundWindow: 1 days, outboundLimit: 10_000_000e18});
-        m.usdsGlobalLimits  = RateLimits({inboundWindow: 1 days, inboundLimit: 9_000_000e18,  outboundWindow: 1 days, outboundLimit: 8_000_000e18});
-        m.susdsGlobalLimits = RateLimits({inboundWindow: 1 days, inboundLimit: 7_000_000e18,  outboundWindow: 1 days, outboundLimit: 6_000_000e18});
+        m.usds.rateLimits   = RateLimits({inboundWindow: 5 hours,  inboundLimit: 5_000_000e18,  outboundWindow: 6 hours,  outboundLimit: 4_000_000e18});
+        m.susds.rateLimits  = RateLimits({inboundWindow: 7 hours,  inboundLimit: 11_000_000e18, outboundWindow: 8 hours,  outboundLimit: 10_000_000e18});
+        m.usdsGlobalLimits  = RateLimits({inboundWindow: 9 hours,  inboundLimit: 9_000_000e18,  outboundWindow: 10 hours, outboundLimit: 8_000_000e18});
+        m.susdsGlobalLimits = RateLimits({inboundWindow: 11 hours, inboundLimit: 7_000_000e18,  outboundWindow: 12 hours, outboundLimit: 6_000_000e18});
 
         // --- A prior Base migration already brought these OFTs up (distinct values throughout) ---
         uint32 BASE_EID = 30184;
@@ -602,20 +590,29 @@ contract LZAvaxMigrationInitTest is Test {
         vm.stopPrank();
 
         // Global caps overwritten with the new system-wide totals, despite the pre-existing non-zero caps.
-        assertEq(_inLimit(newUsdsOft,   OFTAdapterLike(newUsdsOft).SENTINEL_EID()),  9_000_000e18);
-        assertEq(_outLimit(newUsdsOft,  OFTAdapterLike(newUsdsOft).SENTINEL_EID()),  8_000_000e18);
-        assertEq(_inLimit(newSusdsOft,  OFTAdapterLike(newSusdsOft).SENTINEL_EID()), 7_000_000e18);
-        assertEq(_outLimit(newSusdsOft, OFTAdapterLike(newSusdsOft).SENTINEL_EID()), 6_000_000e18);
+        uint32 sentinel = OFTAdapterLike(newUsdsOft).SENTINEL_EID();
+        assertEq(_inLimit(newUsdsOft,    sentinel), m.usdsGlobalLimits.inboundLimit);
+        assertEq(_inWindow(newUsdsOft,   sentinel), m.usdsGlobalLimits.inboundWindow);
+        assertEq(_outLimit(newUsdsOft,   sentinel), m.usdsGlobalLimits.outboundLimit);
+        assertEq(_outWindow(newUsdsOft,  sentinel), m.usdsGlobalLimits.outboundWindow);
+        assertEq(_inLimit(newSusdsOft,   sentinel), m.susdsGlobalLimits.inboundLimit);
+        assertEq(_inWindow(newSusdsOft,  sentinel), m.susdsGlobalLimits.inboundWindow);
+        assertEq(_outLimit(newSusdsOft,  sentinel), m.susdsGlobalLimits.outboundLimit);
+        assertEq(_outWindow(newSusdsOft, sentinel), m.susdsGlobalLimits.outboundWindow);
 
-        // Avalanche routes set fresh; the pre-existing Base routes are left untouched.
-        assertEq(_inLimit(newUsdsOft,   AVAX_EID), 5_000_000e18);
-        assertEq(_outLimit(newUsdsOft,  AVAX_EID), 4_000_000e18);
-        assertEq(_inLimit(newSusdsOft,  AVAX_EID), 11_000_000e18);
-        assertEq(_outLimit(newSusdsOft, AVAX_EID), 10_000_000e18);
-        assertEq(_inLimit(newUsdsOft,   BASE_EID), 3_000_000e18);
-        assertEq(_outLimit(newUsdsOft,  BASE_EID), 2_000_000e18);
-        assertEq(_inLimit(newSusdsOft,  BASE_EID), 13_000_000e18);
-        assertEq(_outLimit(newSusdsOft, BASE_EID), 12_000_000e18);
+        // Avalanche routes set fresh (limits + windows), the pre-existing Base routes left untouched.
+        assertEq(_inLimit(newUsdsOft,    AVAX_EID), m.usds.rateLimits.inboundLimit);
+        assertEq(_inWindow(newUsdsOft,   AVAX_EID), m.usds.rateLimits.inboundWindow);
+        assertEq(_outLimit(newUsdsOft,   AVAX_EID), m.usds.rateLimits.outboundLimit);
+        assertEq(_outWindow(newUsdsOft,  AVAX_EID), m.usds.rateLimits.outboundWindow);
+        assertEq(_inLimit(newSusdsOft,   AVAX_EID), m.susds.rateLimits.inboundLimit);
+        assertEq(_inWindow(newSusdsOft,  AVAX_EID), m.susds.rateLimits.inboundWindow);
+        assertEq(_outLimit(newSusdsOft,  AVAX_EID), m.susds.rateLimits.outboundLimit);
+        assertEq(_outWindow(newSusdsOft, AVAX_EID), m.susds.rateLimits.outboundWindow);
+        assertEq(_inLimit(newUsdsOft,    BASE_EID), 3_000_000e18);
+        assertEq(_outLimit(newUsdsOft,   BASE_EID), 2_000_000e18);
+        assertEq(_inLimit(newSusdsOft,   BASE_EID), 13_000_000e18);
+        assertEq(_outLimit(newSusdsOft,  BASE_EID), 12_000_000e18);
 
         // Chainlog rewrites are idempotent: the same values land again.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
