@@ -335,16 +335,33 @@ contract LZAvaxMigrationInitTest is Test {
     function _outWindow(address oft, uint32 eid) internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).outboundRateLimits(eid); }
     function _inWindow(address oft, uint32 eid)  internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).inboundRateLimits(eid); }
 
+    // Assert an OFT's stored rate-limit bucket for `eid` (limit + window, both directions).
+    function _assertRateLimits(address oft, uint32 eid, RateLimits memory rl) internal view {
+        assertEq(_inLimit(oft, eid),   rl.inboundLimit);
+        assertEq(_inWindow(oft, eid),  rl.inboundWindow);
+        assertEq(_outLimit(oft, eid),  rl.outboundLimit);
+        assertEq(_outWindow(oft, eid), rl.outboundWindow);
+    }
+
     function test_migrateAvax() public {
         mainnet.selectFork();
         uint256 oldUsdsBalBefore   = TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT);
         bytes32 oldSusdsPeerBefore = OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID);
+        uint32  sentinel           = OFTAdapterLike(newUsdsOft).SENTINEL_EID();
 
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.usds.rateLimits   = RateLimits({inboundWindow: 13 hours, inboundLimit: 1_000_000e18, outboundWindow: 14 hours, outboundLimit: 2_000_000e18});
+        m.usdsGlobalLimits  = RateLimits({inboundWindow: 15 hours, inboundLimit: 3_000_000e18, outboundWindow: 16 hours, outboundLimit: 4_000_000e18});
+        m.susds.rateLimits  = RateLimits({inboundWindow: 17 hours, inboundLimit: 5_000_000e18, outboundWindow: 18 hours, outboundLimit: 6_000_000e18});
+        m.susdsGlobalLimits = RateLimits({inboundWindow: 19 hours, inboundLimit: 7_000_000e18, outboundWindow: 20 hours, outboundLimit: 8_000_000e18});
         vm.deal(GOV_RELAY, 1 ether);
         vm.startPrank(PAUSE_PROXY);
         LZAvaxMigrationInit.migrateAvax(m);
         vm.stopPrank();
+
+        // USDS swap: new lockbox activated with its per-eid + global rate limits.
+        _assertRateLimits(newUsdsOft, AVAX_EID,  m.usds.rateLimits);
+        _assertRateLimits(newUsdsOft, sentinel,  m.usdsGlobalLimits);
 
         // USDS swap: backing moved old -> new (frozen Avalanche supply); old keeps the rest (Solana).
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
@@ -358,6 +375,10 @@ contract LZAvaxMigrationInitTest is Test {
         // USDS swap: chainlog repointed, old adapter kept under the Solana key.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
         assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), OLD_L1_USDS_OFT);
+
+        // sUSDS swap: new lockbox activated with its per-eid + global rate limits.
+        _assertRateLimits(newSusdsOft, AVAX_EID, m.susds.rateLimits);
+        _assertRateLimits(newSusdsOft, sentinel, m.susdsGlobalLimits);
 
         // sUSDS swap: chainlog repointed; old adapter's Avalanche route left intact (not severed, unlike USDS).
         assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
@@ -375,14 +396,8 @@ contract LZAvaxMigrationInitTest is Test {
         bridge.destination.selectFork();
 
         // New remote OFTs activated for the Ethereum route (per-eid rate limits flipped on).
-        assertEq(_inLimit(avaxUsds.oft,    ETH_EID), avaxUsds.rateLimits.inboundLimit);
-        assertEq(_inWindow(avaxUsds.oft,   ETH_EID), avaxUsds.rateLimits.inboundWindow);
-        assertEq(_outLimit(avaxUsds.oft,   ETH_EID), avaxUsds.rateLimits.outboundLimit);
-        assertEq(_outWindow(avaxUsds.oft,  ETH_EID), avaxUsds.rateLimits.outboundWindow);
-        assertEq(_inLimit(avaxSusds.oft,   ETH_EID), avaxSusds.rateLimits.inboundLimit);
-        assertEq(_inWindow(avaxSusds.oft,  ETH_EID), avaxSusds.rateLimits.inboundWindow);
-        assertEq(_outLimit(avaxSusds.oft,  ETH_EID), avaxSusds.rateLimits.outboundLimit);
-        assertEq(_outWindow(avaxSusds.oft, ETH_EID), avaxSusds.rateLimits.outboundWindow);
+        _assertRateLimits(avaxUsds.oft,  ETH_EID, avaxUsds.rateLimits);
+        _assertRateLimits(avaxSusds.oft, ETH_EID, avaxSusds.rateLimits);
 
         // Gov receiver holds the migration's target recv config (differs from the live set).
         assertEq(keccak256(abi.encode(_readRecvUln(AVAX_GOV_RECEIVER, ETH_EID))), keccak256(abi.encode(newRecvUln)));
@@ -556,11 +571,11 @@ contract LZAvaxMigrationInitTest is Test {
     }
 
     // Pre-set a rate-limit bucket on a new lockbox as the pause proxy (owner), simulating a prior spell.
-    function _presetRoute(address oft, uint32 eid, uint256 inLimit, uint256 outLimit) internal {
+    function _presetRoute(address oft, uint32 eid, RateLimits memory rl) internal {
         RateLimitConfig[] memory inb = new RateLimitConfig[](1);
         RateLimitConfig[] memory out = new RateLimitConfig[](1);
-        inb[0] = RateLimitConfig({eid: eid, window: 1 days, limit: inLimit});
-        out[0] = RateLimitConfig({eid: eid, window: 1 days, limit: outLimit});
+        inb[0] = RateLimitConfig({eid: eid, window: rl.inboundWindow,  limit: rl.inboundLimit});
+        out[0] = RateLimitConfig({eid: eid, window: rl.outboundWindow, limit: rl.outboundLimit});
         vm.prank(PAUSE_PROXY);
         OFTAdapterLike(oft).setRateLimits(inb, out);
     }
@@ -583,10 +598,13 @@ contract LZAvaxMigrationInitTest is Test {
 
         // --- A prior Base migration already brought these OFTs up (distinct values throughout) ---
         uint32 BASE_EID = 30184;
-        _presetRoute(newUsdsOft,  BASE_EID, 3_000_000e18,  2_000_000e18);   // Base route live (untouched by migration)
-        _presetRoute(newSusdsOft, BASE_EID, 13_000_000e18, 12_000_000e18);
-        _presetRoute(newUsdsOft,  OFTAdapterLike(newUsdsOft).SENTINEL_EID(),  15_000_000e18, 14_000_000e18); // Base-era global cap (overwritten)
-        _presetRoute(newSusdsOft, OFTAdapterLike(newSusdsOft).SENTINEL_EID(), 17_000_000e18, 16_000_000e18);
+        uint32 sentinel = OFTAdapterLike(newUsdsOft).SENTINEL_EID();
+        RateLimits memory baseUsds  = RateLimits({inboundWindow: 21 hours, inboundLimit: 3_000_000e18,  outboundWindow: 22 hours, outboundLimit: 2_000_000e18});
+        RateLimits memory baseSusds = RateLimits({inboundWindow: 23 hours, inboundLimit: 13_000_000e18, outboundWindow: 24 hours, outboundLimit: 12_000_000e18});
+        _presetRoute(newUsdsOft,  BASE_EID, baseUsds);   // Base per-eid route (left untouched)
+        _presetRoute(newSusdsOft, BASE_EID, baseSusds);
+        _presetRoute(newUsdsOft,  sentinel, RateLimits({inboundWindow: 1 days, inboundLimit: 15_000_000e18, outboundWindow: 1 days, outboundLimit: 14_000_000e18})); // Base-era global cap (overwritten)
+        _presetRoute(newSusdsOft, sentinel, RateLimits({inboundWindow: 1 days, inboundLimit: 17_000_000e18, outboundWindow: 1 days, outboundLimit: 16_000_000e18}));
         vm.startPrank(PAUSE_PROXY);
         chainlog.setAddress("USDS_OFT",        newUsdsOft);
         chainlog.setAddress("SUSDS_OFT",       newSusdsOft);
@@ -600,29 +618,14 @@ contract LZAvaxMigrationInitTest is Test {
         vm.stopPrank();
 
         // Global caps overwritten with the new system-wide totals, despite the pre-existing non-zero caps.
-        uint32 sentinel = OFTAdapterLike(newUsdsOft).SENTINEL_EID();
-        assertEq(_inLimit(newUsdsOft,    sentinel), m.usdsGlobalLimits.inboundLimit);
-        assertEq(_inWindow(newUsdsOft,   sentinel), m.usdsGlobalLimits.inboundWindow);
-        assertEq(_outLimit(newUsdsOft,   sentinel), m.usdsGlobalLimits.outboundLimit);
-        assertEq(_outWindow(newUsdsOft,  sentinel), m.usdsGlobalLimits.outboundWindow);
-        assertEq(_inLimit(newSusdsOft,   sentinel), m.susdsGlobalLimits.inboundLimit);
-        assertEq(_inWindow(newSusdsOft,  sentinel), m.susdsGlobalLimits.inboundWindow);
-        assertEq(_outLimit(newSusdsOft,  sentinel), m.susdsGlobalLimits.outboundLimit);
-        assertEq(_outWindow(newSusdsOft, sentinel), m.susdsGlobalLimits.outboundWindow);
+        _assertRateLimits(newUsdsOft,  sentinel, m.usdsGlobalLimits);
+        _assertRateLimits(newSusdsOft, sentinel, m.susdsGlobalLimits);
 
-        // Avalanche routes set fresh (limits + windows), the pre-existing Base routes left untouched.
-        assertEq(_inLimit(newUsdsOft,    AVAX_EID), m.usds.rateLimits.inboundLimit);
-        assertEq(_inWindow(newUsdsOft,   AVAX_EID), m.usds.rateLimits.inboundWindow);
-        assertEq(_outLimit(newUsdsOft,   AVAX_EID), m.usds.rateLimits.outboundLimit);
-        assertEq(_outWindow(newUsdsOft,  AVAX_EID), m.usds.rateLimits.outboundWindow);
-        assertEq(_inLimit(newSusdsOft,   AVAX_EID), m.susds.rateLimits.inboundLimit);
-        assertEq(_inWindow(newSusdsOft,  AVAX_EID), m.susds.rateLimits.inboundWindow);
-        assertEq(_outLimit(newSusdsOft,  AVAX_EID), m.susds.rateLimits.outboundLimit);
-        assertEq(_outWindow(newSusdsOft, AVAX_EID), m.susds.rateLimits.outboundWindow);
-        assertEq(_inLimit(newUsdsOft,    BASE_EID), 3_000_000e18);
-        assertEq(_outLimit(newUsdsOft,   BASE_EID), 2_000_000e18);
-        assertEq(_inLimit(newSusdsOft,   BASE_EID), 13_000_000e18);
-        assertEq(_outLimit(newSusdsOft,  BASE_EID), 12_000_000e18);
+        // Avalanche routes set fresh; the pre-existing Base routes left untouched.
+        _assertRateLimits(newUsdsOft,  AVAX_EID, m.usds.rateLimits);
+        _assertRateLimits(newSusdsOft, AVAX_EID, m.susds.rateLimits);
+        _assertRateLimits(newUsdsOft,  BASE_EID, baseUsds);
+        _assertRateLimits(newSusdsOft, BASE_EID, baseSusds);
 
         // Chainlog rewrites are idempotent: the same values land again.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
