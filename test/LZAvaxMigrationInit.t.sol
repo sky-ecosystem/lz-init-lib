@@ -39,7 +39,7 @@ interface ChainlogLike {
 interface TokenLike {
     function balanceOf(address) external view returns (uint256);
     function wards(address) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external;
 }
 interface GovSenderLike  { function canCallTarget(address, uint32, bytes32) external view returns (bool); }
 interface OwnableLike    { function owner() external view returns (address); }
