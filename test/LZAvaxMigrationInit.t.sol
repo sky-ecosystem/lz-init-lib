@@ -175,6 +175,27 @@ contract LZAvaxMigrationInitTest is Test {
     //  Real-adapter deploy + wiring helpers
     // ====================================================================================
 
+    // An OApp's peer for `eid`, as an address.
+    function _peer(address oapp, uint32 eid) internal view returns (address) {
+        return address(uint160(uint256(OFTAdapterLike(oapp).peers(eid))));
+    }
+
+    // Deploy a SkyOFT adapter proxy (lockbox on L1, mint/burn on L2), initialized with the test as
+    // owner + delegate so it can be wired. Unwired until _wireOft (peers need the counterpart deployed).
+    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft) {
+        address impl = lockbox
+            ? address(new SkyOFTAdapter(token_, ENDPOINT))
+            : address(new SkyOFTAdapterMintBurn(token_, ENDPOINT));
+        oft = address(new ERC1967Proxy(impl, abi.encodeWithSignature("initialize(address)", address(this))));
+    }
+
+    // The OApp's live receive ULN config for `srcEid`, as the app set it (raw, so the NIL required-DVN
+    // sentinel round-trips; getConfig would normalize it to 0 = "inherit MessageLib default").
+    function _readRecvUln(address oapp, uint32 srcEid) internal view returns (UlnConfig memory) {
+        (address recvLib,) = EndpointLike(ENDPOINT).getReceiveLibrary(oapp, srcEid);
+        return UlnLike(recvLib).getAppUlnConfig(oapp, srcEid);
+    }
+
     // type-3 lzReceive option, identical bytes to LZInit._encodeLzReceiveOptions(gas).
     function _encodeOpts(uint128 gas) internal pure returns (bytes memory) {
         return abi.encodePacked(hex"0003", uint8(1), uint16(17), uint8(1), gas);
@@ -188,27 +209,6 @@ contract LZAvaxMigrationInitTest is Test {
     function _avaxOftDvns() internal pure returns (address[] memory d) {
         d = new address[](4);
         (d[0], d[1], d[2], d[3]) = (AVAX_DVN_HORIZEN, AVAX_DVN_LZ_LABS, AVAX_DVN_NETHERMIND, AVAX_DVN_CANARY);
-    }
-
-    // The OApp's live receive ULN config for `srcEid`, as the app set it (raw, so the NIL required-DVN
-    // sentinel round-trips; getConfig would normalize it to 0 = "inherit MessageLib default").
-    function _readRecvUln(address oapp, uint32 srcEid) internal view returns (UlnConfig memory) {
-        (address recvLib,) = EndpointLike(ENDPOINT).getReceiveLibrary(oapp, srcEid);
-        return UlnLike(recvLib).getAppUlnConfig(oapp, srcEid);
-    }
-
-    // An OApp's peer for `eid`, as an address.
-    function _peer(address oapp, uint32 eid) internal view returns (address) {
-        return address(uint160(uint256(OFTAdapterLike(oapp).peers(eid))));
-    }
-
-    // Deploy a SkyOFT adapter proxy (lockbox on L1, mint/burn on L2), initialized with the test as
-    // owner + delegate so it can be wired. Unwired until _wireOft (peers need the counterpart deployed).
-    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft) {
-        address impl = lockbox
-            ? address(new SkyOFTAdapter(token_, ENDPOINT))
-            : address(new SkyOFTAdapterMintBurn(token_, ENDPOINT));
-        oft = address(new ERC1967Proxy(impl, abi.encodeWithSignature("initialize(address)", address(this))));
     }
 
     // Wire `oft` for `remoteEid` against the real endpoint: libraries + executor config copied from
@@ -252,20 +252,7 @@ contract LZAvaxMigrationInitTest is Test {
         SkyOFTCore(oft).transferOwnership(finalOwner);
     }
 
-    // limit field (4th) of the stored rate-limit bucket.
-    function _outLimit(address oft, uint32 eid) internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).outboundRateLimits(eid); }
-    function _inLimit(address oft, uint32 eid)  internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).inboundRateLimits(eid); }
-
-    // window field (2nd) of the stored rate-limit bucket.
-    function _outWindow(address oft, uint32 eid) internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).outboundRateLimits(eid); }
-    function _inWindow(address oft, uint32 eid)  internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).inboundRateLimits(eid); }
-
     // --- migrateAvax: full L1 spell (funding / chainlog / whitelist) + relay to Avalanche ---
-
-    // External boundary so vm.expectRevert can catch the (pre-auth) sanity-check reverts.
-    function runMigration(AvaxMigration memory m) external {
-        LZAvaxMigrationInit.migrateAvax(m);
-    }
 
     function _buildMigration(bool ccipHandedOff) internal returns (AvaxMigration memory m) {
         return _buildMigration({ccipMsgLibRole: true, ccipAllowlisted: true, ccipHandedOff: ccipHandedOff});
@@ -339,6 +326,14 @@ contract LZAvaxMigrationInitTest is Test {
         out[idx] = x;
         for (uint256 i = idx; i < arr.length; ++i) out[i + 1] = arr[i];
     }
+
+    // limit field (4th) of the stored rate-limit bucket.
+    function _outLimit(address oft, uint32 eid) internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).outboundRateLimits(eid); }
+    function _inLimit(address oft, uint32 eid)  internal view returns (uint256 l) { (,,, l) = OFTAdapterLike(oft).inboundRateLimits(eid); }
+
+    // window field (2nd) of the stored rate-limit bucket.
+    function _outWindow(address oft, uint32 eid) internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).outboundRateLimits(eid); }
+    function _inWindow(address oft, uint32 eid)  internal view returns (uint48 w) { (, w,,) = OFTAdapterLike(oft).inboundRateLimits(eid); }
 
     function test_migrateAvax() public {
         mainnet.selectFork();
@@ -637,6 +632,11 @@ contract LZAvaxMigrationInitTest is Test {
         // Funding still drains the hardcoded legacy lockbox, regardless of the already-repointed USDS_OFT.
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft),         10571537000000000000);
         assertEq(TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT), legacyBalBefore - 10571537000000000000);
+    }
+
+    // External boundary so vm.expectRevert can catch the (pre-auth) sanity-check reverts.
+    function runMigration(AvaxMigration memory m) external {
+        LZAvaxMigrationInit.migrateAvax(m);
     }
 
     function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
