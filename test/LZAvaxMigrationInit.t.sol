@@ -66,15 +66,7 @@ contract LZAvaxMigrationInitTest is Test {
     uint32 constant AVAX_EID = 30106;
 
     // The LZ EndpointV2 has the same address on Ethereum, Avalanche, and Base.
-    address constant ENDPOINT           = 0x1a44076050125825900e736c501f859c50fE728c;
-    address constant OLD_AVAX_GOV_RELAY = 0xe928885BCe799Ed933651715608155F01abA23cA; // old relay
-    address constant AVAX_GOV_RECEIVER  = 0x6fdd46947ca6903c8c159d1dF2012Bc7fC5cEeec;
-    address constant AVAX_USDS          = 0x86Ff09db814ac346a7C6FE2Cd648F27706D1D470;
-    address constant AVAX_SUSDS         = 0xb94D9613C7aAB11E548a327154Cc80eCa911B5c1;
-    address constant OLD_AVAX_USDS_OFT  = 0x4fec40719fD9a8AE3F8E20531669DEC5962D2619;
-    address constant OLD_AVAX_SUSDS_OFT = 0x7297D4811f088FC26bC5475681405B99b41E1FF9;
-    address constant OLD_L1_USDS_OFT    = 0x1e1D42781FC170EF9da004Fb735f56F0276d01B8; // V1 L1 USDS lockbox
-    address constant OLD_L1_SUSDS_OFT   = 0x85A3FE4DA2a6cB98A5bdF62458B0dB8471B9f0f1; // V1 L1 sUSDS lockbox
+    address constant ENDPOINT = 0x1a44076050125825900e736c501f859c50fE728c;
 
     address constant ETH_DVN_HORIZEN     = 0x380275805876Ff19055EA900CDb2B46a94ecF20D;
     address constant ETH_DVN_LZ_LABS     = 0x589dEDbD617e0CBcB916A9223F4d1300c294236b;
@@ -93,6 +85,15 @@ contract LZAvaxMigrationInitTest is Test {
     address GOV_SENDER;
     address GOV_RELAY;
     address USDS;
+    address OLD_L1_USDS_OFT;
+    address OLD_L1_SUSDS_OFT;
+
+    address AVAX_GOV_RECEIVER;
+    address OLD_AVAX_USDS_OFT;
+    address OLD_AVAX_SUSDS_OFT;
+    address OLD_AVAX_GOV_RELAY;
+    address AVAX_USDS;
+    address AVAX_SUSDS;
 
     Domain    mainnet;
     Bridge    bridge;
@@ -111,19 +112,29 @@ contract LZAvaxMigrationInitTest is Test {
     UlnConfig newRecvUln;
 
     function setUp() public {
-        mainnet     = getChain("mainnet").createSelectFork(25337000);
-        PAUSE_PROXY = chainlog.getAddress("MCD_PAUSE_PROXY");
-        GOV_SENDER  = chainlog.getAddress("LZ_GOV_SENDER");
-        GOV_RELAY   = chainlog.getAddress("LZ_GOV_RELAY");
-        USDS        = chainlog.getAddress("USDS");
+        mainnet            = getChain("mainnet").createSelectFork(25337000);
+        PAUSE_PROXY        = chainlog.getAddress("MCD_PAUSE_PROXY");
+        GOV_SENDER         = chainlog.getAddress("LZ_GOV_SENDER");
+        GOV_RELAY          = chainlog.getAddress("LZ_GOV_RELAY");
+        USDS               = chainlog.getAddress("USDS");
+        OLD_L1_USDS_OFT    = chainlog.getAddress("USDS_OFT");
+        OLD_L1_SUSDS_OFT   = chainlog.getAddress("SUSDS_OFT");
+
+        AVAX_GOV_RECEIVER  = _peer(GOV_SENDER,       AVAX_EID);
+        OLD_AVAX_USDS_OFT  = _peer(OLD_L1_USDS_OFT,  AVAX_EID);
+        OLD_AVAX_SUSDS_OFT = _peer(OLD_L1_SUSDS_OFT, AVAX_EID);
 
         Domain memory avalanche = getChain("avalanche").createFork(88200000);
         bridge = LZBridgeTesting.createLZBridge(mainnet, avalanche);
 
+        bridge.destination.selectFork();
+        OLD_AVAX_GOV_RELAY = OwnableLike(AVAX_GOV_RECEIVER).owner();  // current relay, before the migration hands it over
+        AVAX_USDS          = OFTAdapterLike(OLD_AVAX_USDS_OFT).token();
+        AVAX_SUSDS         = OFTAdapterLike(OLD_AVAX_SUSDS_OFT).token();
+
         // Deploy every new adapter proxy first, so the deployer can then wire the real mutual peers
         // (each L1 lockbox and its L2 remote reference the other), exactly as production would. Both the
         // L1 and L2 OFT sides use the same 4/4 required DVN set (per chain).
-        bridge.destination.selectFork();
         l2Spell   = new LZAvaxMigrationL2Spell();
         newRelay  = address(new L2GovernanceRelay(ETH_EID, AVAX_GOV_RECEIVER, GOV_RELAY, 1 days, 7 days, new address[](0)));
         address avaxUsdsOft  = _deployOftProxy(false, AVAX_USDS);
@@ -184,6 +195,11 @@ contract LZAvaxMigrationInitTest is Test {
     function _readRecvUln(address oapp, uint32 srcEid) internal view returns (UlnConfig memory) {
         (address recvLib,) = EndpointLike(ENDPOINT).getReceiveLibrary(oapp, srcEid);
         return UlnLike(recvLib).getAppUlnConfig(oapp, srcEid);
+    }
+
+    // An OApp's peer for `eid`, as an address.
+    function _peer(address oapp, uint32 eid) internal view returns (address) {
+        return address(uint160(uint256(OFTAdapterLike(oapp).peers(eid))));
     }
 
     // Deploy a SkyOFT adapter proxy (lockbox on L1, mint/burn on L2), initialized with the test as
@@ -326,8 +342,7 @@ contract LZAvaxMigrationInitTest is Test {
 
     function test_migrateAvax() public {
         mainnet.selectFork();
-        address oldUsds = chainlog.getAddress("USDS_OFT");  // real lockbox, owned by PAUSE_PROXY
-        uint256 oldUsdsBalBefore   = TokenLike(USDS).balanceOf(oldUsds);
+        uint256 oldUsdsBalBefore   = TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT);
         bytes32 oldSusdsPeerBefore = OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID);
 
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
@@ -338,16 +353,16 @@ contract LZAvaxMigrationInitTest is Test {
 
         // USDS swap: backing moved old -> new (frozen Avalanche supply); old keeps the rest (Solana).
         assertEq(TokenLike(USDS).balanceOf(newUsdsOft), 10571537000000000000);
-        assertEq(TokenLike(USDS).balanceOf(oldUsds), oldUsdsBalBefore - 10571537000000000000);
+        assertEq(TokenLike(USDS).balanceOf(OLD_L1_USDS_OFT), oldUsdsBalBefore - 10571537000000000000);
 
         // USDS swap: old adapter's Avalanche route severed (peer cleared + rate limits zeroed).
-        assertEq(OFTAdapterLike(oldUsds).peers(AVAX_EID), bytes32(0));
-        assertEq(_inLimit(oldUsds,  AVAX_EID), 0);
-        assertEq(_outLimit(oldUsds, AVAX_EID), 0);
+        assertEq(OFTAdapterLike(OLD_L1_USDS_OFT).peers(AVAX_EID), bytes32(0));
+        assertEq(_inLimit(OLD_L1_USDS_OFT,  AVAX_EID), 0);
+        assertEq(_outLimit(OLD_L1_USDS_OFT, AVAX_EID), 0);
 
         // USDS swap: chainlog repointed, old adapter kept under the Solana key.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
-        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), oldUsds);
+        assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), OLD_L1_USDS_OFT);
 
         // sUSDS swap: chainlog repointed; old adapter's Avalanche route left intact (not severed, unlike USDS).
         assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
