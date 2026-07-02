@@ -3,3 +3,13 @@ src = "deploy"
 out = "out"
 libs = ["lib"]
 evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+fs_permissions = [{ access = "read-write", path = "./script" }]
+
+# Fork-test + script RPCs. `getChain("mainnet"/"avalanche")` in the clone tests resolves the endpoint
+# by alias from here (Foundry's built-in default mainnet alias points at a dead llamarpc host).
+# Overridable via the MAINNET_RPC_URL / AVALANCHE_RPC_URL env vars.
+[rpc_endpoints]
+mainnet   = "${MAINNET_RPC_URL}"
+avalanche = "${AVALANCHE_RPC_URL}"
