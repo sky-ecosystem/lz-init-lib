@@ -169,7 +169,7 @@ contract LZInitRelayTest is Test {
 
         _relaySpell(abi.encodeCall(
             LZL2Spell.activateOft,
-            (avaxSusdsOft, ETH_EID, cfg, rl, rlAt, token, owner)
+            (avaxSusdsOft, ETH_EID, cfg, rl, rlAt, token, owner, AVAX_ENDPOINT)
         ));
 
         (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);

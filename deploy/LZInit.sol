@@ -58,6 +58,7 @@ struct GovConfig {
     address        sendLib;
     ExecutorConfig execCfg;
     UlnConfig      sendUlnCfg;
+    uint256        ccipDvnIndex;  // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     address        l2GovRelay;
 }
 
@@ -69,6 +70,16 @@ struct OftConfig {
     UlnConfig      sendUlnCfg;
     address        recvLib;
     UlnConfig      recvUlnCfg;
+    uint128        optionsGas;
+}
+
+// Note: DVN arrays in `sendUlnCfg` must be strictly ascending by address.
+struct ForwarderConfig {
+    address        peer;
+    address        sendLib;
+    ExecutorConfig execCfg;
+    UlnConfig      sendUlnCfg;
+    uint256        ccipDvnIndex;  // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     uint128        optionsGas;
 }
 
@@ -132,6 +143,19 @@ interface OFTAdapterLike is OAppLike {
     function msgInspector() external view returns (address);
 }
 
+interface LzForwarderLike is OAppLike {
+    function owner() external view returns (address);
+    function dstEid() external view returns (uint32);
+    function susds() external view returns (address);
+    function enforcedOptions(uint32 eid, uint16 msgType) external view returns (bytes memory);
+}
+
+interface CCIPDVNAdapterLike {
+    function grantRole(bytes32 role, address account) external;
+    function dstConfig(uint32 eid) external view returns (uint64, uint16, bytes memory, uint256);
+    function receiveLibs(address sendLib, uint32 dstEid) external view returns (bytes32);
+}
+
 interface ChainlogLike {
     function getAddress(bytes32 key) external view returns (address);
 }
@@ -146,6 +170,9 @@ library LZInit {
     uint16 internal constant MSG_TYPE_SEND          = 1;
     uint16 internal constant MSG_TYPE_SEND_AND_CALL = 2;
 
+    // CCIP DVN adapter whitelist role (declared internal upstream, so recomputed here).
+    bytes32 internal constant ALLOWLIST = keccak256("ALLOWLIST");
+
     // ==================================
     //  Configuration functions
     // ==================================
@@ -154,9 +181,15 @@ library LZInit {
     ///         LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and
     ///         the L2GovernanceRelay must have been configured by the deployer
     ///         beforehand.
-    /// @dev    L1-only.
+    /// @dev    L1-only. Assumes the CCIP adapter's route to `remoteEid` was wired via `LZDVNInit.wireCCIPDVN`
+    ///         and its one-time role setup verified, both before this call.
     function wireGovPeer(uint32 remoteEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
+
+        // The adapter's one-time role setup (whitelist, message lib, admin) is assumed verified
+        // post-deployment (on- or off-chain), so it isn't re-checked here; only its per-eid route is.
+        // Indexing it out of the DVN set also enforces membership.
+        assertCcipRoute(cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex], cfg.sendLib, remoteEid);
 
         _wireSend({
             endpoint:     OAppLike(govOappSender).endpoint(),
@@ -231,9 +264,10 @@ library LZInit {
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
-        address           owner
+        address           owner,
+        address           endpoint
     ) internal {
-        _verifyOftConfig(oft, remoteEid, cfg, rlAccountingType, token, owner);
+        _verifyOftConfig(oft, remoteEid, cfg, rlAccountingType, token, owner, endpoint);
         updateRateLimits(oft, remoteEid, rateLimits);
     }
 
@@ -270,6 +304,19 @@ library LZInit {
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2.
     function unpauseOft(address oft) internal {
         OFTAdapterLike(oft).unpause();
+    }
+
+    /// @notice Verify an SSR oracle forwarder's config, then whitelist it on the shared
+    ///         CCIP DVN adapter it uses as a DVN.
+    /// @dev    L1-only. Assumes the CCIP adapter's route to `remoteEid` was wired via `LZDVNInit.wireCCIPDVN`,
+    ///         and the deployer pre-configured the forwarder and its remote receiver, all before this call.
+    function activateSsrForwarder(
+        address                forwarder,
+        uint32                 remoteEid,
+        ForwarderConfig memory cfg
+    ) internal {
+        address ccipDvnAdapter = _verifyForwarderConfig(forwarder, remoteEid, cfg);
+        CCIPDVNAdapterLike(ccipDvnAdapter).grantRole(ALLOWLIST, forwarder);
     }
 
     // ==================================
@@ -318,7 +365,7 @@ library LZInit {
         });
     }
 
-    // --- Private helpers ---
+    // --- Helpers ---
 
     function _wireSend(
         address               endpoint,
@@ -349,16 +396,28 @@ library LZInit {
         );
     }
 
+    /// @dev Both halves of the CCIP route to `remoteEid` (dstConfig + receiveLibs) are set together by
+    ///      `LZDVNInit.wireCCIPDVN`; a new destination isn't routed until that runs, so require both.
+    ///      Takes an address (not the interface) and is internal so the one-off migration libs can reuse it.
+    function assertCcipRoute(address ccipDvnAdapter, address sendLib, uint32 remoteEid) internal view {
+        CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(ccipDvnAdapter);
+        (uint64 chainSelector,,,) = ccip.dstConfig(remoteEid % 30000);
+        require(chainSelector != 0,                                 "LZInit/ccip-route-unset");
+        require(ccip.receiveLibs(sendLib, remoteEid) != bytes32(0), "LZInit/ccip-recv-lib-unset");
+    }
+
     function _verifyOftConfig(
         address          oft,
         uint32           remoteEid,
         OftConfig memory cfg,
         uint8            rlAccountingType,
         address          token,
-        address          owner
+        address          owner,
+        address          endpoint
     ) private view {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
-        EndpointLike   ep   = EndpointLike(oft_.endpoint());
+        require(oft_.endpoint() == endpoint, "LZInit/endpoint-mismatch");
+        EndpointLike ep = EndpointLike(endpoint);
 
         require(oft_.peers(remoteEid)          == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
         require(!oft_.paused(),                                                        "LZInit/paused");
@@ -406,6 +465,49 @@ library LZInit {
         bytes memory expectedOptions = _encodeLzReceiveOptions(cfg.optionsGas);
         require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
         require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND_AND_CALL)) == keccak256(expectedOptions), "LZInit/enforced-send-and-call-mismatch");
+    }
+
+    function _verifyForwarderConfig(
+        address                forwarder,
+        uint32                 remoteEid,
+        ForwarderConfig memory cfg
+    ) private view returns (address ccipDvnAdapter) {
+        address l1Endpoint = OAppLike(chainlog.getAddress("LZ_GOV_SENDER")).endpoint();
+        LzForwarderLike fwd = LzForwarderLike(forwarder);
+        require(fwd.endpoint() == l1Endpoint, "LZInit/endpoint-mismatch");
+        EndpointLike ep = EndpointLike(l1Endpoint);
+
+        require(fwd.dstEid() == remoteEid,                    "LZInit/dst-eid-mismatch");
+        require(fwd.susds()  == chainlog.getAddress("SUSDS"), "LZInit/susds-mismatch");
+        require(fwd.peers(remoteEid) == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
+
+        address pauseProxy = chainlog.getAddress("MCD_PAUSE_PROXY");
+        require(fwd.owner()             == pauseProxy, "LZInit/owner-mismatch");
+        require(ep.delegates(forwarder) == pauseProxy, "LZInit/delegate-mismatch");
+
+        require(ep.getSendLibrary(forwarder, remoteEid) == cfg.sendLib, "LZInit/send-lib-mismatch");
+        require(!ep.isDefaultSendLibrary(forwarder, remoteEid),         "LZInit/send-lib-default");
+
+        require(
+            keccak256(ep.getConfig(forwarder, cfg.sendLib, remoteEid, EXECUTOR_CONFIG_TYPE)) == keccak256(abi.encode(cfg.execCfg)),
+            "LZInit/exec-cfg-mismatch"
+        );
+
+        UlnConfig memory sendUln = UlnLike(cfg.sendLib).getAppUlnConfig(forwarder, remoteEid);
+        require(keccak256(abi.encode(sendUln)) == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
+        require(sendUln.confirmations    != 0, "LZInit/send-uln-conf-default");
+        require(sendUln.requiredDVNCount != 0, "LZInit/send-uln-req-default");
+        require(sendUln.optionalDVNCount != 0, "LZInit/send-uln-opt-default");
+
+        // Forwarder only ever sends MSG_TYPE_SEND.
+        require(
+            keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeLzReceiveOptions(cfg.optionsGas)),
+            "LZInit/enforced-send-mismatch"
+        );
+
+        // Indexing the adapter out of the (verified) optional DVN set also enforces its membership.
+        ccipDvnAdapter = cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex];
+        assertCcipRoute(ccipDvnAdapter, cfg.sendLib, remoteEid);
     }
 
 }

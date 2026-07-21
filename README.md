@@ -8,13 +8,14 @@ This repository provides general-purpose library functions (`LZInit.sol`) plus o
 
 ### Configuration Functions
 
-- **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand.
+- **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand. Verifies the shared CCIP DVN adapter is routed to the new chain (assumed to have been wired separately via `LZDVNInit.wireCCIPDVN` in [`sky-ecosystem/lz-gov-dvns-deploy`](https://github.com/sky-ecosystem/lz-gov-dvns-deploy)).
 - **`wireOftPeer`** - Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero per-eid rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`updateGlobalRateLimits`** - Set an OFT's global (`SENTINEL_EID`) rate-limit cap, the L1 lockbox's (`SkyOFTAdapter`) aggregate limit across all remotes, on top of the per-eid buckets. L1-lockbox only (L2 remote OFTs have no global cap).
 - **`updateRateLimits`** - Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`setUlnConfig`** - Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`unpauseOft`** - Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
+- **`activateSsrForwarder`** - Whitelist an SSR oracle forwarder on the shared CCIP DVN adapter it uses as a DVN. Verifies the forwarder's on-chain config was configured as expected and the CCIP DVN adapter was routed to the destination chain (assumed wired via `LZDVNInit.wireCCIPDVN`), before granting the whitelist. L1-only.
 
 ### Relay (L1 → L2)
 
@@ -102,10 +103,17 @@ If two EVM remotes (e.g. Avalanche and Plasma) are each wired to L1 for USDS and
 - `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, AVAX_EID, ...)), ...)` - wire Plasma's USDS to Avalanche
 - `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, AVAX_EID, ...)), ...)` - wire Plasma's sUSDS to Avalanche
 
+### Onboarding an SSR oracle bridge to a new chain
+
+A new SSR oracle bridge is an L1 forwarder → remote receiver → SSR oracle. Given the deployer has deployed and configured those contracts, and the shared CCIP DVN adapter is already routed to that chain, an L1 spell whitelists the forwarder on the adapter:
+
+- `activateSsrForwarder(SSR_FORWARDER, REMOTE_EID, cfg)` - verify the L1 forwarder and the adapter's route to the chain, then whitelist it on the shared adapter
+
 ### Expanding SkyLink to a new chain
 
 To add Base as a new remote for both USDS and sUSDS, after the deployer has deployed and pre-configured Base's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
 
+- `LZDVNInit.wireCCIPDVN(LZ_GOV_CCIP_DVN_ADAPTER, ...)` - route the shared CCIP DVN adapter to Base (sister lib `lz-gov-dvns-deploy`); `wireGovPeer` verifies this route is set
 - `wireGovPeer(BASE_EID, ...)` - add Base as a destination for `LZ_GOV_SENDER`
 - `wireOftPeer(USDS_OFT, BASE_EID, ...)` - connect L1 USDS to Base
 - `wireOftPeer(SUSDS_OFT, BASE_EID, ...)` - connect L1 sUSDS to Base

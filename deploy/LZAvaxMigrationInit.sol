@@ -81,6 +81,7 @@ library LZAvaxMigrationInit {
 
     uint32  internal constant AVAX_EID            = 30106; // Avalanche LayerZero EID
     uint32  internal constant ETH_EID             = 30101; // Ethereum LayerZero EID
+    address internal constant ENDPOINT            = 0x1a44076050125825900e736c501f859c50fE728c; // LZ EndpointV2 (same on Eth + Avax)
     uint8   internal constant MIN_DVN_OVERLAP     = 4;     // min DVNs the new optional set must keep from the current 4/7
     address internal constant OLD_AVAX_GOV_RELAY  = 0xe928885BCe799Ed933651715608155F01abA23cA; // current Avalanche L2GovernanceRelay
     address internal constant AVAX_GOV_RECEIVER   = 0x6fdd46947ca6903c8c159d1dF2012Bc7fC5cEeec; // Avalanche GovernanceOAppReceiver
@@ -126,10 +127,11 @@ library LZAvaxMigrationInit {
         // SendSideDeployer contract.
         {
         CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]);
-        require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),               "LZAvaxMigrationInit/ccip-sendlib-missing-role");
-        require(ccip.hasRole(ALLOWLIST,          govSender),             "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
-        require(ccip.allowlistSize()             == m.ccipAllowlistSize, "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
-        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),                "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+        require(ccip.hasRole(MESSAGE_LIB_ROLE, sendLib),      "LZAvaxMigrationInit/ccip-sendlib-missing-role");
+        require(ccip.hasRole(ALLOWLIST, govSender),           "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
+        require(ccip.allowlistSize() == m.ccipAllowlistSize,  "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
+        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),     "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+        LZInit.assertCcipRoute(address(ccip), sendLib, AVAX_EID);
         }
 
         // ============================ Relay L2 spell ============================
@@ -153,7 +155,7 @@ library LZAvaxMigrationInit {
 
         address usds = chainlog.getAddress("USDS");
 
-        LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy);
+        LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
 
@@ -179,7 +181,7 @@ library LZAvaxMigrationInit {
         // for Solana, unlike USDS), so no need to sever its Avalanche route here: its peer is left
         // set and its rate limits are already 0 on-chain.
 
-        LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy);
+        LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);
 
@@ -232,8 +234,8 @@ library LZAvaxMigrationInit {
         OftActivation memory avaxSusds
     ) internal {
         // Activate the new remote OFTs for the Ethereum route.
-        LZInit.activateOft(avaxUsds.oft,  ETH_EID, avaxUsds.cfg,  avaxUsds.rateLimits,  avaxUsds.rlAccountingType,  AVAX_USDS,  address(this));
-        LZInit.activateOft(avaxSusds.oft, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this));
+        LZInit.activateOft(avaxUsds.oft,  ETH_EID, avaxUsds.cfg,  avaxUsds.rateLimits,  avaxUsds.rlAccountingType,  AVAX_USDS,  address(this), ENDPOINT);
+        LZInit.activateOft(avaxSusds.oft, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this), ENDPOINT);
 
         // Gov receiver: new receive DVN set (lib read from the endpoint).
         (address recvLib,) = EndpointLike(OAppLike(AVAX_GOV_RECEIVER).endpoint()).getReceiveLibrary(AVAX_GOV_RECEIVER, ETH_EID);

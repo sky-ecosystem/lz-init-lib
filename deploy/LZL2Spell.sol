@@ -25,9 +25,10 @@ contract LZL2Spell {
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
-        address           owner
+        address           owner,
+        address           endpoint
     ) external {
-        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner);
+        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, endpoint);
     }
 
     function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) external {
