@@ -280,8 +280,8 @@ contract LZAvaxMigrationInitTest is Test {
         address[] memory allow = new address[](1);
         allow[0] = ccipAllowlisted ? GOV_SENDER : makeAddr("decoyOApp");
         SendSideDeployer dep = new SendSideDeployer(depSendLib, allow);
-        // Avalanche routing; the remote CCIP adapter/broadcaster are opaque here (force-delivery skips
-        // CCIP-side verification), they only need to be set.
+        // Avalanche routing; the remote CCIP adapter/broadcaster are opaque (force-delivery skips CCIP-side
+        // verification), set to the same values migrateAvax value-checks against (m.ccip* below).
         dep.configure(CCIPDVNCfg({
             remoteEid:               AVAX_EID,
             remoteCcipChainSelector: AVAX_CCIP_SELECTOR,
@@ -300,6 +300,9 @@ contract LZAvaxMigrationInitTest is Test {
         }
         m.newL2GovRelay     = newRelay;
         m.ccipAllowlistSize = 1;  // SendSideDeployer allowlists exactly the gov sender
+        m.ccipRemoteAdapter = makeAddr("avaxCcipAdapter");      // matches the configured route
+        m.ccipBroadcaster   = makeAddr("avaxCcipBroadcaster");  // matches the configured route
+        m.ccipGas           = 200_000;                          // matches the configured route
         m.usds              = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits  = _zeroRL();
         m.legacyCLKey       = "USDS_OFT_SOLANA";
@@ -726,6 +729,44 @@ contract LZAvaxMigrationInitTest is Test {
         vm.stopPrank();
 
         assertEq(chainlog.getAddress("USDS_OFT"), m.usds.oft);  // proof it ran to completion
+    }
+
+    function test_migrateAvax_revertsIfCcipChainSelectorMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        address ccip = m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex];
+        // Wrong chainSelector, correct peer/gas so the chain-selector check is the one that fires.
+        vm.mockCall(
+            ccip,
+            abi.encodeWithSignature("dstConfig(uint32)", AVAX_EID % 30000),
+            abi.encode(uint64(1), uint16(0), abi.encode(m.ccipRemoteAdapter), m.ccipGas)
+        );
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-chain-selector-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipPeerMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipRemoteAdapter = makeAddr("wrongAdapter");
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-peer-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipGasMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipGas = 1;
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-gas-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipReceiveLibMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipBroadcaster = makeAddr("wrongBroadcaster");
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-recv-lib-mismatch"));
+        this.runMigration(m);
     }
 
     function test_migrateAvax_revertsIfCcipIndexOutOfBounds() public {

@@ -37,6 +37,8 @@ interface ChainlogLike {
 interface CCIPDVNAdapterLike {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function allowlistSize() external view returns (uint64);
+    function dstConfig(uint32 eid) external view returns (uint64, uint16, bytes memory, uint256);
+    function receiveLibs(address sendLib, uint32 dstEid) external view returns (bytes32);
 }
 
 interface LZAvaxMigrationL2SpellLike {
@@ -60,6 +62,9 @@ struct AvaxMigration {
     address       newL2GovRelay;      // new L2GovernanceRelay
     uint256       ccipDvnIndex;       // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     uint64        ccipAllowlistSize;  // expected CCIP DVN adapter allowlist size
+    address       ccipRemoteAdapter;  // expected remote CCIP adapter (dstConfig peer)
+    address       ccipBroadcaster;    // expected remote CCIP broadcaster (receiveLibs route)
+    uint256       ccipGas;            // expected CCIP dest-chain exec gas (dstConfig gas)
     OftActivation usds;               // L1 USDS OFT and its initial config
     RateLimits    usdsGlobalLimits;   // L1 USDS OFT global cap
     bytes32       legacyCLKey;        // chainlog key to record the legacy (old V1) USDS OFT under
@@ -99,6 +104,9 @@ library LZAvaxMigrationInit {
     bytes32 internal constant ALLOWLIST           = keccak256("ALLOWLIST");
     bytes32 internal constant MESSAGE_LIB_ROLE    = keccak256("MESSAGE_LIB_ROLE");
 
+    // Chainlink CCIP chain selector for Avalanche C-Chain (the avax route's dstConfig.chainSelector).
+    uint64  internal constant AVAX_CCIP_SELECTOR  = 6433500567565415381;
+
     ChainlogLike internal constant chainlog = ChainlogLike(address(LZInit.chainlog));
 
     /// @notice Migrate the Avalanche gov bridge (new DVN set + new L2GovernanceRelay) and both
@@ -131,7 +139,13 @@ library LZAvaxMigrationInit {
         require(ccip.hasRole(ALLOWLIST, govSender),           "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
         require(ccip.allowlistSize() == m.ccipAllowlistSize,  "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
         require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),     "LZAvaxMigrationInit/ccip-admin-not-handed-off");
-        LZInit.assertCcipRoute(address(ccip), sendLib, AVAX_EID);
+
+        // multiplierBps is skipped: wireCCIPDVN range-guarantees it and it only affects fees.
+        (uint64 chainSelector,, bytes memory peer, uint256 dstGas) = ccip.dstConfig(AVAX_EID % 30000);
+        require(chainSelector == AVAX_CCIP_SELECTOR,                                                 "LZAvaxMigrationInit/ccip-chain-selector-mismatch");
+        require(keccak256(peer) == keccak256(abi.encode(m.ccipRemoteAdapter)),                       "LZAvaxMigrationInit/ccip-peer-mismatch");
+        require(dstGas == m.ccipGas,                                                                 "LZAvaxMigrationInit/ccip-gas-mismatch");
+        require(ccip.receiveLibs(sendLib, AVAX_EID) == bytes32(uint256(uint160(m.ccipBroadcaster))), "LZAvaxMigrationInit/ccip-recv-lib-mismatch");
         }
 
         // ============================ Relay L2 spell ============================

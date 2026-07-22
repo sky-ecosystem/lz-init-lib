@@ -191,11 +191,10 @@ library LZInit {
     function wireGovPeer(uint32 remoteEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
-        // If the shared CCIP DVN adapter is in use, assert its route to `remoteEid` is wired (its
-        // one-time role setup is assumed verified post-deployment, so only the per-eid route is checked
-        // here). Indexing it out of the DVN set also enforces membership.
+        // If the shared CCIP DVN adapter is in use, assert its route to `remoteEid` is set; indexing it
+        // out of the DVN set also enforces membership.
         if (cfg.ccipDvnIndex != NO_CCIP_DVN) {
-            assertCcipRoute(cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex], cfg.sendLib, remoteEid);
+            _assertCcipRoute(cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex], cfg.sendLib, remoteEid);
         }
 
         _wireSend({
@@ -329,7 +328,7 @@ library LZInit {
 
         if (cfg.ccipDvnIndex != NO_CCIP_DVN) {
             address ccipDvnAdapter = cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex];
-            assertCcipRoute(ccipDvnAdapter, cfg.sendLib, remoteEid);
+            _assertCcipRoute(ccipDvnAdapter, cfg.sendLib, remoteEid);
             CCIPDVNAdapterLike(ccipDvnAdapter).grantRole(ALLOWLIST, forwarder);
         }
     }
@@ -411,10 +410,12 @@ library LZInit {
         );
     }
 
-    /// @dev A working CCIP route to `remoteEid` needs both halves set (dstConfig + receiveLibs), so this
-    ///      checks both; `LZDVNInit.wireCCIPDVN` sets them together.
-    ///      Takes an address (not the interface) and is internal so the one-off migration libs can reuse it.
-    function assertCcipRoute(address ccipDvnAdapter, address sendLib, uint32 remoteEid) internal view {
+    /// @dev Asserts the CCIP route to `remoteEid` is set (both halves, dstConfig + receiveLibs); presence
+    ///      only, not exact values. Its callers (wireGovPeer, activateSsrForwarder) assume the adapter's
+    ///      roles and initial routes were verified post-deployment (on- or off-chain), and later routes can
+    ///      only be added via a spell (so trusted); this just guards against forgetting the separate
+    ///      `LZDVNInit.wireCCIPDVN` step.
+    function _assertCcipRoute(address ccipDvnAdapter, address sendLib, uint32 remoteEid) private view {
         CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(ccipDvnAdapter);
         (uint64 chainSelector,,,) = ccip.dstConfig(remoteEid % 30000);
         require(chainSelector != 0,                                 "LZInit/ccip-route-unset");
