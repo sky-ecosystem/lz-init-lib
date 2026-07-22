@@ -229,6 +229,25 @@ contract LZInitTest is Test {
             GovSenderLike(GOV_SENDER).canCallTarget(L1_GOV_RELAY, DST_EID, bytes32(uint256(uint160(l2GovRelay)))));
     }
 
+    function test_wireGovPeer_skipsCcipWhenSentinel() public {
+        GovConfig memory cfg = GovConfig({
+            peer:         govPeer,
+            sendLib:      SEND_LIB,
+            execCfg:      execCfg,
+            sendUlnCfg:   govUlnCfg,
+            ccipDvnIndex: type(uint256).max,
+            l2GovRelay:   l2GovRelay
+        });
+
+        vm.startPrank(PAUSE_PROXY);
+        LZInit.wireGovPeer(DST_EID, cfg);
+        vm.stopPrank();
+
+        assertEq(OAppLike(GOV_SENDER).peers(DST_EID), bytes32(uint256(uint160(govPeer))));
+        assertTrue(
+            GovSenderLike(GOV_SENDER).canCallTarget(L1_GOV_RELAY, DST_EID, bytes32(uint256(uint160(l2GovRelay)))));
+    }
+
     // Inserts `x` into the ascending-sorted `arr`, returning the new array and `x`'s index.
     function _insertSorted(address[] memory arr, address x) internal pure returns (address[] memory out, uint256 idx) {
         out = new address[](arr.length + 1);
@@ -752,6 +771,12 @@ contract LZInitTest is Test {
         vm.expectRevert("LZInit/ccip-recv-lib-unset");
         this.callActivateSsr(DST_EID, cfg);
         vm.clearMockedCalls();
+
+        // Sentinel index: pure config sanity check, no route assertion and no whitelist grant.
+        cfg = _loadFwdCfg();
+        cfg.ccipDvnIndex = type(uint256).max;
+        LZInit.activateSsrForwarder(address(ssrFwd), DST_EID, cfg);
+        assertFalse(CCIPDVNAdapter(payable(ssrCcipAdapter)).hasRole(ALLOWLIST, address(ssrFwd)));
 
         // --- Happy path ---
         cfg = _loadFwdCfg();

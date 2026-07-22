@@ -173,6 +173,10 @@ library LZInit {
     // CCIP DVN adapter whitelist role (declared internal upstream, so recomputed here).
     bytes32 internal constant ALLOWLIST = keccak256("ALLOWLIST");
 
+    // Sentinel `ccipDvnIndex` (GovConfig/ForwarderConfig) meaning the OApp doesn't use the shared CCIP
+    // DVN adapter: its route isn't asserted and, for an SSR forwarder, no whitelist is granted.
+    uint256 internal constant NO_CCIP_DVN = type(uint256).max;
+
     // ==================================
     //  Configuration functions
     // ==================================
@@ -181,15 +185,18 @@ library LZInit {
     ///         LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and
     ///         the L2GovernanceRelay must have been configured by the deployer
     ///         beforehand.
-    /// @dev    L1-only. Assumes the CCIP adapter's route to `remoteEid` was wired via `LZDVNInit.wireCCIPDVN`
-    ///         and its one-time role setup verified, both before this call.
+    /// @dev    L1-only. When `cfg.ccipDvnIndex` points at the shared CCIP DVN adapter, asserts its
+    ///         route to `remoteEid` is set up (which should have been done beforehand via
+    ///         `LZDVNInit.wireCCIPDVN`); pass the `NO_CCIP_DVN` sentinel to skip when the adapter isn't used.
     function wireGovPeer(uint32 remoteEid, GovConfig memory cfg) internal {
         address govOappSender = chainlog.getAddress("LZ_GOV_SENDER");
 
-        // The adapter's one-time role setup (whitelist, message lib, admin) is assumed verified
-        // post-deployment (on- or off-chain), so it isn't re-checked here; only its per-eid route is.
-        // Indexing it out of the DVN set also enforces membership.
-        assertCcipRoute(cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex], cfg.sendLib, remoteEid);
+        // If the shared CCIP DVN adapter is in use, assert its route to `remoteEid` is wired (its
+        // one-time role setup is assumed verified post-deployment, so only the per-eid route is checked
+        // here). Indexing it out of the DVN set also enforces membership.
+        if (cfg.ccipDvnIndex != NO_CCIP_DVN) {
+            assertCcipRoute(cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex], cfg.sendLib, remoteEid);
+        }
 
         _wireSend({
             endpoint:     OAppLike(govOappSender).endpoint(),
@@ -306,17 +313,25 @@ library LZInit {
         OFTAdapterLike(oft).unpause();
     }
 
-    /// @notice Verify an SSR oracle forwarder's config, then whitelist it on the shared
-    ///         CCIP DVN adapter it uses as a DVN.
-    /// @dev    L1-only. Assumes the CCIP adapter's route to `remoteEid` was wired via `LZDVNInit.wireCCIPDVN`,
-    ///         and the deployer pre-configured the forwarder and its remote receiver, all before this call.
+    /// @notice Verify an SSR oracle forwarder's config, then, when it uses the shared CCIP DVN adapter,
+    ///         assert the adapter's route to `remoteEid` and whitelist the forwarder on it.
+    /// @dev    L1-only. The whitelist grant is the activation here; with `cfg.ccipDvnIndex == NO_CCIP_DVN`
+    ///         the adapter isn't used, so this degrades to a pure config sanity check (no route
+    ///         assertion, no grant). Assumes the deployer pre-configured
+    ///         the forwarder and its remote receiver, and (if used) wired the adapter route via
+    ///         `LZDVNInit.wireCCIPDVN`, all before this call.
     function activateSsrForwarder(
         address                forwarder,
         uint32                 remoteEid,
         ForwarderConfig memory cfg
     ) internal {
-        address ccipDvnAdapter = _verifyForwarderConfig(forwarder, remoteEid, cfg);
-        CCIPDVNAdapterLike(ccipDvnAdapter).grantRole(ALLOWLIST, forwarder);
+        _verifyForwarderConfig(forwarder, remoteEid, cfg);
+
+        if (cfg.ccipDvnIndex != NO_CCIP_DVN) {
+            address ccipDvnAdapter = cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex];
+            assertCcipRoute(ccipDvnAdapter, cfg.sendLib, remoteEid);
+            CCIPDVNAdapterLike(ccipDvnAdapter).grantRole(ALLOWLIST, forwarder);
+        }
     }
 
     // ==================================
@@ -396,8 +411,8 @@ library LZInit {
         );
     }
 
-    /// @dev Both halves of the CCIP route to `remoteEid` (dstConfig + receiveLibs) are set together by
-    ///      `LZDVNInit.wireCCIPDVN`; a new destination isn't routed until that runs, so require both.
+    /// @dev A working CCIP route to `remoteEid` needs both halves set (dstConfig + receiveLibs), so this
+    ///      checks both; `LZDVNInit.wireCCIPDVN` sets them together.
     ///      Takes an address (not the interface) and is internal so the one-off migration libs can reuse it.
     function assertCcipRoute(address ccipDvnAdapter, address sendLib, uint32 remoteEid) internal view {
         CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(ccipDvnAdapter);
@@ -471,7 +486,7 @@ library LZInit {
         address                forwarder,
         uint32                 remoteEid,
         ForwarderConfig memory cfg
-    ) private view returns (address ccipDvnAdapter) {
+    ) private view {
         address l1Endpoint = OAppLike(chainlog.getAddress("LZ_GOV_SENDER")).endpoint();
         LzForwarderLike fwd = LzForwarderLike(forwarder);
         require(fwd.endpoint() == l1Endpoint, "LZInit/endpoint-mismatch");
@@ -504,10 +519,6 @@ library LZInit {
             keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeLzReceiveOptions(cfg.optionsGas)),
             "LZInit/enforced-send-mismatch"
         );
-
-        // Indexing the adapter out of the (verified) optional DVN set also enforces its membership.
-        ccipDvnAdapter = cfg.sendUlnCfg.optionalDVNs[cfg.ccipDvnIndex];
-        assertCcipRoute(ccipDvnAdapter, cfg.sendLib, remoteEid);
     }
 
 }

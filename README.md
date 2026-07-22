@@ -8,14 +8,14 @@ This repository provides general-purpose library functions (`LZInit.sol`) plus o
 
 ### Configuration Functions
 
-- **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand. Verifies the shared CCIP DVN adapter is routed to the new chain (assumed to have been wired separately via `LZDVNInit.wireCCIPDVN` in [`sky-ecosystem/lz-gov-dvns-deploy`](https://github.com/sky-ecosystem/lz-gov-dvns-deploy)).
+- **`wireGovPeer`** - Connect LZ_GOV_SENDER to a new remote peer and whitelist LZ_GOV_RELAY. The remote peer (a GovernanceOAppReceiver) and the L2GovernanceRelay will have been configured by the deployer beforehand. When the shared CCIP DVN adapter is used, verifies its route to the new chain is set up (which should have been wired separately via `LZDVNInit.wireCCIPDVN` in [`sky-ecosystem/lz-gov-dvns-deploy`](https://github.com/sky-ecosystem/lz-gov-dvns-deploy)).
 - **`wireOftPeer`** - Connect a local OFT adapter to a new remote peer. Configures the OFT locally to support the new peer and sets its rate limits. In the case of a new remote, the remote OFT adapter will have been configured by the deployer before its ownership is transferred to the L2GovernanceRelay. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`activateOft`** - Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay on L2) by setting non-zero per-eid rate limits. Verifies the on-chain state was configured as expected before flipping the limits on. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`updateGlobalRateLimits`** - Set an OFT's global (`SENTINEL_EID`) rate-limit cap, the L1 lockbox's (`SkyOFTAdapter`) aggregate limit across all remotes, on top of the per-eid buckets. L1-lockbox only (L2 remote OFTs have no global cap).
 - **`updateRateLimits`** - Update rate limits on an OFT adapter for a given destination. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`setUlnConfig`** - Update the ULN (DVN) config for an OApp's send or receive library for a given remote eid. Also usable on L2 via `LZL2Spell` + `relayToL2`.
 - **`unpauseOft`** - Unpause an OFT adapter. Also usable on L2 via `LZL2Spell` + `relayToL2`.
-- **`activateSsrForwarder`** - Whitelist an SSR oracle forwarder on the shared CCIP DVN adapter it uses as a DVN. Verifies the forwarder's on-chain config was configured as expected and the CCIP DVN adapter was routed to the destination chain (assumed wired via `LZDVNInit.wireCCIPDVN`), before granting the whitelist. L1-only.
+- **`activateSsrForwarder`** - Verify an SSR oracle forwarder's on-chain config and, when it uses the shared CCIP DVN adapter, assert the adapter's route to the destination chain is set up (which should have been wired via `LZDVNInit.wireCCIPDVN`) and whitelist the forwarder on it. L1-only.
 
 ### Relay (L1 → L2)
 
