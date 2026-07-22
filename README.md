@@ -111,16 +111,16 @@ A new SSR oracle bridge is an L1 forwarder → remote receiver → SSR oracle. G
 
 ### Expanding SkyLink to a new chain
 
-To add Base as a new remote for both USDS and sUSDS, after the deployer has deployed and pre-configured Base's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
+To add a new chain (`NEW_EID`) as a remote for both USDS and sUSDS, after the deployer has deployed and pre-configured the new chain's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
 
-- `LZDVNInit.wireCCIPDVN(LZ_GOV_CCIP_DVN_ADAPTER, ...)` - route the shared CCIP DVN adapter to Base (sister lib `lz-gov-dvns-deploy`); `wireGovPeer` verifies this route is set
-- `wireGovPeer(BASE_EID, ...)` - add Base as a destination for `LZ_GOV_SENDER`
-- `wireOftPeer(USDS_OFT, BASE_EID, ...)` - connect L1 USDS to Base
-- `wireOftPeer(SUSDS_OFT, BASE_EID, ...)` - connect L1 sUSDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, BASE_EID, ...)), ...)` - wire Avalanche USDS to Base
-- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_SUSDS_OFT, BASE_EID, ...)), ...)` - wire Avalanche sUSDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, BASE_EID, ...)), ...)` - wire Plasma USDS to Base
-- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, BASE_EID, ...)), ...)` - wire Plasma sUSDS to Base
+- `LZDVNInit.wireCCIPDVN(LZ_GOV_CCIP_DVN_ADAPTER, ...)` - route the shared CCIP DVN adapter to the new chain (sister lib `lz-gov-dvns-deploy`); `wireGovPeer` verifies this route is set
+- `wireGovPeer(NEW_EID, ...)` - add the new chain as a destination for `LZ_GOV_SENDER`
+- `wireOftPeer(USDS_OFT, NEW_EID, ...)` - connect L1 USDS to the new chain
+- `wireOftPeer(SUSDS_OFT, NEW_EID, ...)` - connect L1 sUSDS to the new chain
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_USDS_OFT, NEW_EID, ...)), ...)` - wire Avalanche USDS to the new chain
+- `relayToL2(AVAX_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (AVAX_SUSDS_OFT, NEW_EID, ...)), ...)` - wire Avalanche sUSDS to the new chain
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_USDS_OFT, NEW_EID, ...)), ...)` - wire Plasma USDS to the new chain
+- `relayToL2(PLASMA_EID, ..., abi.encodeCall(LZL2Spell.wireOftPeer, (PLASMA_SUSDS_OFT, NEW_EID, ...)), ...)` - wire Plasma sUSDS to the new chain
 
 ## One-off Migration Helpers
 
