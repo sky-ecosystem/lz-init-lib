@@ -316,9 +316,10 @@ library LZInit {
     ///         assert the adapter's route to `remoteEid` and whitelist the forwarder on it.
     /// @dev    L1-only. The whitelist grant is the activation here; with `cfg.ccipDvnIndex == NO_CCIP_DVN`
     ///         the adapter isn't used, so this degrades to a pure config sanity check (no route
-    ///         assertion, no grant). Assumes the deployer pre-configured
-    ///         the forwarder and its remote receiver, and (if used) wired the adapter route via
-    ///         `LZDVNInit.wireCCIPDVN`, all before this call.
+    ///         assertion, no grant). Assumes the deployer pre-configured the forwarder and (if used) wired
+    ///         the adapter route via `LZDVNInit.wireCCIPDVN` before this call; the remote receiver/oracle
+    ///         and the remote CCIP DVN adapter are not sanity checked as part of this function and are
+    ///         assumed to have been verified off-chain.
     function activateSsrForwarder(
         address                forwarder,
         uint32                 remoteEid,

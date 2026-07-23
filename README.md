@@ -109,6 +109,8 @@ A new SSR oracle bridge is an L1 forwarder → remote receiver → SSR oracle. G
 
 - `activateSsrForwarder(SSR_FORWARDER, REMOTE_EID, cfg)` - verify the L1 forwarder and the adapter's route to the chain, then whitelist it on the shared adapter
 
+The remote receiver/oracle and the remote CCIP DVN adapter config are not sanity checked as part of this function and are assumed to have been verified off-chain.
+
 ### Expanding SkyLink to a new chain
 
 To add a new chain (`NEW_EID`) as a remote for both USDS and sUSDS, after the deployer has deployed and pre-configured the new chain's `GovernanceOAppReceiver`, `L2GovernanceRelay`, and OFT adapters, an L1 spell calls:
