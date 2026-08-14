@@ -81,6 +81,7 @@ struct ForwarderConfig {
     UlnConfig      sendUlnCfg;
     uint256        ccipDvnIndex;  // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     uint128        optionsGas;
+    uint128        composeGas;
 }
 
 interface EndpointLike {
@@ -411,6 +412,19 @@ library LZInit {
         );
     }
 
+    /// @dev Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(gas, 0)
+    ///      .addExecutorLzComposeOption(0, composeGas, 0).
+    function _encodeForwarderOptions(uint128 gas, uint128 composeGas) private pure returns (bytes memory) {
+        return abi.encodePacked(
+            _encodeLzReceiveOptions(gas),
+            uint8(1),   // WORKER_ID (executor)
+            uint16(19), // option data length (1 byte option type + 2 bytes index + 16 bytes gas)
+            uint8(3),   // OPTION_TYPE_LZCOMPOSE
+            uint16(0),  // compose index
+            composeGas
+        );
+    }
+
     /// @dev Asserts the CCIP route to `remoteEid` is set (both halves, dstConfig + receiveLibs); presence
     ///      only, not exact values. Its callers (wireGovPeer, activateSsrForwarder) assume the adapter's
     ///      roles and initial routes were verified post-deployment (on- or off-chain), and later routes can
@@ -518,7 +532,7 @@ library LZInit {
 
         // Forwarder only ever sends MSG_TYPE_SEND.
         require(
-            keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeLzReceiveOptions(cfg.optionsGas)),
+            keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeForwarderOptions(cfg.optionsGas, cfg.composeGas)),
             "LZInit/enforced-send-mismatch"
         );
     }

@@ -79,6 +79,7 @@ contract LZInitTest is Test {
     // SSR oracle forwarder activation: the forwarder is a send-only OApp that uses the shared CCIP DVN adapter as one of its optional DVNs
     uint64  constant BASE_CCIP_SELECTOR = 15971525489660198786;
     uint128 constant FWD_OPTIONS_GAS    = 100_000;
+    uint128 constant FWD_COMPOSE_GAS    = 200_000;
     uint16  constant MSG_TYPE_SEND      = 1;
     bytes32 constant ALLOWLIST          = keccak256("ALLOWLIST");
     address constant FWD_RECEIVER       = address(0xBEEF); // opaque L2 receiver / oracle
@@ -753,6 +754,11 @@ contract LZInitTest is Test {
         vm.expectRevert("LZInit/enforced-send-mismatch");
         this.callActivateSsr(DST_EID, cfg);
 
+        cfg = _loadFwdCfg();
+        cfg.composeGas += 1;
+        vm.expectRevert("LZInit/enforced-send-mismatch");
+        this.callActivateSsr(DST_EID, cfg);
+
         // An index past the end of the optional DVN set panics, so a bogus index can't sneak past
         // the membership requirement.
         cfg = _loadFwdCfg();
@@ -842,7 +848,9 @@ contract LZInitTest is Test {
         eo[0] = EnforcedOptionParam({
             eid:     DST_EID,
             msgType: MSG_TYPE_SEND,
-            options: OptionsBuilder.newOptions().addExecutorLzReceiveOption(FWD_OPTIONS_GAS, 0)
+            options: OptionsBuilder.newOptions()
+                .addExecutorLzReceiveOption(FWD_OPTIONS_GAS, 0)
+                .addExecutorLzComposeOption(0, FWD_COMPOSE_GAS, 0)
         });
         f.setEnforcedOptions(eo);
 
@@ -856,6 +864,7 @@ contract LZInitTest is Test {
         cfg.execCfg      = abi.decode(EndpointLike(ENDPOINT).getConfig(address(ssrFwd), SEND_LIB, DST_EID, 1), (ExecutorConfig));
         cfg.sendUlnCfg   = UlnLike(SEND_LIB).getAppUlnConfig(address(ssrFwd), DST_EID);
         cfg.optionsGas   = FWD_OPTIONS_GAS;
+        cfg.composeGas   = FWD_COMPOSE_GAS;
         cfg.ccipDvnIndex = cfg.sendUlnCfg.optionalDVNs[0] == ssrCcipAdapter ? 0 : 1;
     }
 
