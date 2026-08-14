@@ -414,7 +414,7 @@ library LZInit {
 
     /// @dev Equivalent to OptionsBuilder.newOptions().addExecutorLzReceiveOption(gas, 0)
     ///      .addExecutorLzComposeOption(0, composeGas, 0).
-    function _encodeForwarderOptions(uint128 gas, uint128 composeGas) private pure returns (bytes memory) {
+    function _encodeLzReceiveAndComposeOptions(uint128 gas, uint128 composeGas) private pure returns (bytes memory) {
         return abi.encodePacked(
             _encodeLzReceiveOptions(gas),
             uint8(1),   // WORKER_ID (executor)
@@ -532,7 +532,7 @@ library LZInit {
 
         // Forwarder only ever sends MSG_TYPE_SEND.
         require(
-            keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeForwarderOptions(cfg.optionsGas, cfg.composeGas)),
+            keccak256(fwd.enforcedOptions(remoteEid, MSG_TYPE_SEND)) == keccak256(_encodeLzReceiveAndComposeOptions(cfg.optionsGas, cfg.composeGas)),
             "LZInit/enforced-send-mismatch"
         );
     }
