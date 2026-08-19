@@ -27,6 +27,7 @@ interface OAppLike {
 
 interface LockboxOftLike {
     function migrateLockedTokens(address to) external;
+    function aggregateRateLimitAccountingType() external view returns (uint8);
 }
 
 interface ChainlogLike {
@@ -67,9 +68,11 @@ struct AvaxMigration {
     uint256       ccipGas;            // expected CCIP dest-chain exec gas (dstConfig gas)
     OftActivation usds;               // L1 USDS OFT and its initial config
     RateLimits    usdsGlobalLimits;   // L1 USDS OFT global cap
+    uint8         usdsGlobalRlType;   // L1 USDS OFT global cap accounting type
     bytes32       legacyCLKey;        // chainlog key to record the legacy (old V1) USDS OFT under
     OftActivation susds;              // L1 sUSDS OFT and its initial config
     RateLimits    susdsGlobalLimits;  // L1 sUSDS OFT global cap
+    uint8         susdsGlobalRlType;  // L1 sUSDS OFT global cap accounting type
     UlnConfig     recvUlnCfg;         // gov receiver: new receive DVN set
     OftActivation avaxUsds;           // Avalanche USDS remote OFT and its initial config
     OftActivation avaxSusds;          // Avalanche sUSDS remote OFT and its initial config
@@ -169,6 +172,7 @@ library LZAvaxMigrationInit {
 
         address usds = chainlog.getAddress("USDS");
 
+        require(LockboxOftLike(m.usds.oft).aggregateRateLimitAccountingType() == m.usdsGlobalRlType, "LZAvaxMigrationInit/usds-global-rl-type-mismatch");
         LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
@@ -195,6 +199,7 @@ library LZAvaxMigrationInit {
         // for Solana, unlike USDS), so no need to sever its Avalanche route here: its peer is left
         // set and its rate limits are already 0 on-chain.
 
+        require(LockboxOftLike(m.susds.oft).aggregateRateLimitAccountingType() == m.susdsGlobalRlType, "LZAvaxMigrationInit/susds-global-rl-type-mismatch");
         LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);

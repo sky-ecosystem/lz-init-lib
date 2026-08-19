@@ -28,7 +28,7 @@ import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
 import { Domain, DomainHelpers } from "xchain-helpers/testing/Domain.sol";
 import { LZBridgeTesting }       from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
 
-import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendParam, MessagingFee } from "./mocks/SkyOFTAdaptersFlat.sol";
+import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendParam, MessagingFee, RateLimitAccountingType } from "./mocks/SkyOFTAdaptersFlat.sol";
 import { SendSideDeployer, CCIPDVNCfg, CCIPDVNAdapter } from "./mocks/SendSideDeployerFlat.sol";
 import { L2GovernanceRelay } from "./mocks/L2GovernanceRelay.sol";
 
@@ -305,9 +305,11 @@ contract LZAvaxMigrationInitTest is Test {
         m.ccipGas           = 200_000;                          // matches the configured route
         m.usds              = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits  = _zeroRL();
+        m.usdsGlobalRlType  = 0;
         m.legacyCLKey       = "USDS_OFT_SOLANA";
         m.susds             = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
+        m.susdsGlobalRlType = 0;
         m.recvUlnCfg        = newRecvUln;
         m.avaxUsds          = avaxUsds;
         m.avaxSusds         = avaxSusds;
@@ -645,6 +647,14 @@ contract LZAvaxMigrationInitTest is Test {
         LZAvaxMigrationInit.migrateAvax(m);
     }
 
+    /// @dev For reverts raised past the relay to Avalanche: the prank has to be set at the same call
+    ///      depth as the library's own calls, so it cannot be applied around `runMigration`.
+    function runMigrationAsGov(AvaxMigration memory m) external {
+        vm.startPrank(PAUSE_PROXY);
+        LZAvaxMigrationInit.migrateAvax(m);
+        vm.stopPrank();
+    }
+
     function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
         mainnet.selectFork();
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
@@ -777,6 +787,46 @@ contract LZAvaxMigrationInitTest is Test {
         m.ccipDvnIndex = m.sendUlnCfg.optionalDVNs.length;
         vm.expectRevert(stdError.indexOOBError);
         this.runMigration(m);
+    }
+
+    // The lockboxes' sentinel buckets are left at the default Net, so claiming Gross must revert.
+    function test_migrateAvax_revertsIfUsdsGlobalRlTypeMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.usdsGlobalRlType = 1;
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert(bytes("LZAvaxMigrationInit/usds-global-rl-type-mismatch"));
+        this.runMigrationAsGov(m);
+    }
+
+    function test_migrateAvax_revertsIfSusdsGlobalRlTypeMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.susdsGlobalRlType = 1;
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert(bytes("LZAvaxMigrationInit/susds-global-rl-type-mismatch"));
+        this.runMigrationAsGov(m);
+    }
+
+    // Gross sentinel buckets are accepted, and only the aggregate slot is read: the per-eid accounting
+    // type stays Net throughout, so reading the wrong one here would revert.
+    function test_migrateAvax_acceptsGrossGlobalRlType() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.usdsGlobalLimits  = RateLimits({inboundWindow: 15 hours, inboundLimit: 3_000_000e18, outboundWindow: 16 hours, outboundLimit: 4_000_000e18});
+        m.susdsGlobalLimits = RateLimits({inboundWindow: 19 hours, inboundLimit: 7_000_000e18, outboundWindow: 20 hours, outboundLimit: 8_000_000e18});
+        m.usdsGlobalRlType  = 1;
+        m.susdsGlobalRlType = 1;
+
+        vm.startPrank(PAUSE_PROXY);
+        SkyOFTAdapter(m.usds.oft).setAggregateRateLimitAccountingType(RateLimitAccountingType.Gross);
+        SkyOFTAdapter(m.susds.oft).setAggregateRateLimitAccountingType(RateLimitAccountingType.Gross);
+        vm.deal(GOV_RELAY, 1 ether);
+        LZAvaxMigrationInit.migrateAvax(m);
+        vm.stopPrank();
+
+        _assertRateLimits(m.usds.oft,  OFTAdapterLike(m.usds.oft).SENTINEL_EID(),  m.usdsGlobalLimits);
+        _assertRateLimits(m.susds.oft, OFTAdapterLike(m.susds.oft).SENTINEL_EID(), m.susdsGlobalLimits);
     }
 }
 

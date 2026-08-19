@@ -136,7 +136,7 @@ Helpers for specific, single-use migrations, each built on the `LZInit` primitiv
 - **USDS bridge** → new OFT V2 adapters (L1 + Avalanche); the Avalanche backing is moved from the old L1 adapter to the new one, and the old adapter stays live for Solana.
 - **sUSDS bridge** → new OFT V2 adapters (L1 + Avalanche); the old ones are retired.
 
-Preconditions (deployer): the new relay and the new OFT V2 adapters (USDS + sUSDS, on both L1 and Avalanche) are deployed and pre-configured (peer, libs, DVNs, enforced options, fees off), and the new Avalanche adapters are owned by the **old** relay until the spell hands them over.
+Preconditions (deployer): the new relay and the new OFT V2 adapters (USDS + sUSDS, on both L1 and Avalanche) are deployed and pre-configured (peer, libs, DVNs, enforced options, fees off, and on the L1 lockboxes the global-cap accounting type), and the new Avalanche adapters are owned by the **old** relay until the spell hands them over.
 
 Avalanche is expected to be the first L2 brought up on the V2 OFTs. If it isn't, it is assumed that the earlier L2's spell either hasn't updated the chainlog yet, or updated it consistently, with `USDS_OFT`/`SUSDS_OFT` pointing to the new V2 OFTs and the legacy key (`legacyCLKey`, e.g. `USDS_OFT_SOLANA`) to the old OFT. Under that assumption the spell still works, just redundantly: `migrateAvax`'s checks re-verify some of the already-checked state and the chainlog writes rewrite the same values, while the Avalanche route is set fresh and the global caps overwritten. The global-cap inputs must then be the system-wide totals across every L2 on the new lockbox supported so far (excluding Solana, which stays on the old USDS adapter).
 

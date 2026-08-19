@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity >=0.4.11 >=0.4.16 >=0.6.2 >=0.8.0 ^0.8.0 ^0.8.20 ^0.8.21 ^0.8.22;
 
-// Provenance: `forge flatten` of sky-ecosystem/sky-oapp-oft@sky-oft-v2
-// (commit a06a31e3e2492ac979cab0e458fce5c8e67bab2a): SkyOFTAdapter + SkyOFTAdapterMintBurn plus
+// Provenance: `forge flatten` of sky-ecosystem/sky-oapp-oft@support-different-global-accounting-type
+// (commit 85957fb36d87d03c5ec5535190e399e3e38cf17b, PR #48): SkyOFTAdapter + SkyOFTAdapterMintBurn plus
 // OpenZeppelin ERC1967Proxy. Compiled under this repo's settings, so behavior is faithful but the
 // bytecode is not bit-identical to the deployed/audited artifact. Regenerate via `forge flatten`;
 // do not hand-edit.
@@ -555,26 +555,6 @@ interface IPreCrime {
     function version() external view returns (uint64 major, uint8 minor);
 }
 
-// contracts/interfaces/ISkyOFTAdapter.sol
-
-interface ISkyOFTAdapter {
-    // Events
-    event LockedTokensMigrated(address indexed to, uint256 amountLD);
-
-    // Errors
-    error InvalidAddressZero();
-
-    /**
-     * @notice Migrates all locked tokens to a specified address, less the accumulated fees.
-     * @param _to The address to which the locked tokens will be migrated.
-     *
-     * @dev This function is intended to be called by the owner to migrate all locked tokens
-     * from this contract to another address, effectively allowing for a migration of the contract's state.
-     * @dev The migration EXCLUDES accumulated fees.
-     */
-    function migrateLockedTokens(address _to) external;
-}
-
 // contracts/interfaces/ISkyRateLimiter.sol
 
 /**
@@ -630,10 +610,17 @@ interface ISkyRateLimiter {
      */
     event RateLimitsChanged(RateLimitConfig[] rateLimitConfigs, RateLimitDirection direction);
     event RateLimitAccountingTypeSet(RateLimitAccountingType newRateLimitAccountingType);
+    event AggregateRateLimitAccountingTypeSet(RateLimitAccountingType newAggregateRateLimitAccountingType);
     event RateLimitsReset(uint32[] eids, RateLimitDirection direction);
 
     // @dev Error that is thrown when an amount exceeds the rate limit for a given direction.
     error RateLimitExceeded();
+
+    function SENTINEL_EID() external view returns (uint32);
+    function rateLimitAccountingType() external view returns (RateLimitAccountingType);
+    function aggregateRateLimitAccountingType() external view returns (RateLimitAccountingType);
+    function outboundRateLimits(uint32 dstEid) external view returns (RateLimit memory);
+    function inboundRateLimits(uint32 srcEid) external view returns (RateLimit memory);
 
     /**
      * @notice Get the current amount that can be sent to this destination endpoint id for the given rate limit window.
@@ -1562,6 +1549,8 @@ interface ISkyOFT {
     /**
      * @notice Sets the rate limit accounting type.
      * @param rateLimitAccountingType The new rate limit accounting type.
+     * @dev Per-eid buckets only; the `SENTINEL_EID` bucket has its own accounting type, set via
+     * `ISkyOFTAdapter.setAggregateRateLimitAccountingType`.
      * @dev You may want to call `resetRateLimits` after changing the rate limit accounting type.
      */
     function setRateLimitAccountingType(RateLimitAccountingType rateLimitAccountingType) external;
@@ -1594,6 +1583,33 @@ interface ISkyOFT {
      */
     function withdrawFees(address to, uint256 amountLD) external;
 
+}
+
+// contracts/interfaces/ISkyOFTAdapter.sol
+
+interface ISkyOFTAdapter {
+    // Events
+    event LockedTokensMigrated(address indexed to, uint256 amountLD);
+
+    // Errors
+    error InvalidAddressZero();
+
+    /**
+     * @notice Migrates all locked tokens to a specified address, less the accumulated fees.
+     * @param _to The address to which the locked tokens will be migrated.
+     *
+     * @dev This function is intended to be called by the owner to migrate all locked tokens
+     * from this contract to another address, effectively allowing for a migration of the contract's state.
+     * @dev The migration EXCLUDES accumulated fees.
+     */
+    function migrateLockedTokens(address _to) external;
+
+    /**
+     * @notice Sets the accounting type for the reserved aggregate eid.
+     * @param aggregateRateLimitAccountingType The new aggregate-slot accounting type.
+     * @dev You may want to call `resetRateLimits` for `SENTINEL_EID` after changing this.
+     */
+    function setAggregateRateLimitAccountingType(RateLimitAccountingType aggregateRateLimitAccountingType) external;
 }
 
 // node_modules/@openzeppelin/contracts/access/Ownable.sol
@@ -1700,6 +1716,7 @@ abstract contract Ownable is Context {
  * @title SkyRateLimiter
  * @dev Abstract contract for implementing net and gross rate limiting functionality.
  * @dev Toggle between net and gross accounting by calling `_setRateLimitAccountingType`.
+ * @dev The `SENTINEL_EID` bucket has its own toggle, `_setAggregateRateLimitAccountingType`.
  * ---------------------------------------------------------------------------------------------------------------------
  * Net accounting allows two operations to offset each other's net impact (e.g., inflow v.s. outflow of assets).
  * A flexible rate limit that grows during congestive periods and shrinks during calm periods could give some
@@ -1710,8 +1727,19 @@ abstract contract Ownable is Context {
  * Designed to be inherited by other contracts requiring rate limiting to protect resources/services from excessive use.
  */
 abstract contract SkyRateLimiter is ISkyRateLimiter {
+    // @dev Reserved eid for aggregate cross-chain caps. Unset sentinel limits brick every transfer.
+    // @dev Both inbound and outbound must be configured; setting only one side bricks every transfer
+    //      in the unconfigured direction across all peers.
+    // @dev NOT included implicitly in `setRateLimits` / `resetRateLimits`: operators rotating limits, or
+    //      resetting the buckets after flipping either accounting type, must pass `SENTINEL_EID` in those
+    //      arrays explicitly to affect the global cap alongside per-eid buckets.
+    // @dev The sentinel bucket uses `aggregateRateLimitAccountingType`; every other eid uses
+    //      `rateLimitAccountingType`. Both default to `Net` and are set independently.
+    uint32 public constant SENTINEL_EID = type(uint32).max;
+
     struct SkyRateLimiterStorage {
         RateLimitAccountingType rateLimitAccountingType;
+        RateLimitAccountingType aggregateRateLimitAccountingType;
         // Tracks rate limits for outbound transactions to a dstEid.
         mapping(uint32 dstEid => RateLimit) outboundRateLimits;
         // Tracks rate limits for inbound transactions from a srcEid.
@@ -1729,6 +1757,10 @@ abstract contract SkyRateLimiter is ISkyRateLimiter {
 
     function rateLimitAccountingType() external view returns (RateLimitAccountingType) {
         return _getSkyRateLimiterStorage().rateLimitAccountingType;
+    }
+
+    function aggregateRateLimitAccountingType() external view returns (RateLimitAccountingType) {
+        return _getSkyRateLimiterStorage().aggregateRateLimitAccountingType;
     }
 
     function outboundRateLimits(uint32 _dstEid) external view returns (RateLimit memory) {
@@ -1816,6 +1848,16 @@ abstract contract SkyRateLimiter is ISkyRateLimiter {
     function _setRateLimitAccountingType(RateLimitAccountingType _rateLimitAccountingType) internal {
         _getSkyRateLimiterStorage().rateLimitAccountingType = _rateLimitAccountingType;
         emit RateLimitAccountingTypeSet(_rateLimitAccountingType);
+    }
+
+    /**
+     * @notice Sets the accounting type for the reserved aggregate eid.
+     * @dev You may want to call `_resetRateLimits` for `SENTINEL_EID` after changing this.
+     * @param _aggregateRateLimitAccountingType The new aggregate-slot accounting type.
+     */
+    function _setAggregateRateLimitAccountingType(RateLimitAccountingType _aggregateRateLimitAccountingType) internal {
+        _getSkyRateLimiterStorage().aggregateRateLimitAccountingType = _aggregateRateLimitAccountingType;
+        emit AggregateRateLimitAccountingTypeSet(_aggregateRateLimitAccountingType);
     }
 
     /**
@@ -1912,7 +1954,10 @@ abstract contract SkyRateLimiter is ISkyRateLimiter {
         rl.amountInFlight = currentAmountInFlight + _amount;
         rl.lastUpdated = uint128(block.timestamp);
 
-        if ($.rateLimitAccountingType == RateLimitAccountingType.Net) {
+        RateLimitAccountingType accountingType = _eid == SENTINEL_EID
+            ? $.aggregateRateLimitAccountingType
+            : $.rateLimitAccountingType;
+        if (accountingType == RateLimitAccountingType.Net) {
             RateLimit storage oppositeRL = _direction == RateLimitDirection.Outbound
                 ? $.inboundRateLimits[_eid]
                 : $.outboundRateLimits[_eid];
@@ -4983,6 +5028,8 @@ abstract contract SkyOFTCore is
     /**
      * @notice Sets the rate limit accounting type.
      * @param _rateLimitAccountingType The new rate limit accounting type.
+     * @dev Per-eid buckets only; the `SENTINEL_EID` bucket has its own accounting type, set via
+     * `ISkyOFTAdapter.setAggregateRateLimitAccountingType`.
      * @dev You may want to call `resetRateLimits` after changing the rate limit accounting type.
      */
     function setRateLimitAccountingType(RateLimitAccountingType _rateLimitAccountingType) external onlyOwner {
@@ -5067,14 +5114,6 @@ abstract contract SkyOFTCore is
 contract SkyOFTAdapter is ISkyOFTAdapter, SkyOFTCore {
     using SafeERC20 for IERC20;
 
-    // @dev Reserved eid for aggregate cross-chain caps. Unset sentinel limits brick every transfer.
-    // @dev Both inbound and outbound must be configured; setting only one side bricks every transfer
-    //      in the unconfigured direction across all peers.
-    // @dev NOT included implicitly in `setRateLimits` / `resetRateLimits`: operators rotating limits or
-    //      flipping `RateLimitAccountingType` must pass `SENTINEL_EID` in those arrays explicitly to
-    //      affect the global cap alongside per-eid buckets.
-    uint32 public constant SENTINEL_EID = type(uint32).max;
-
     struct SkyOFTAdapterStorage {
         uint256 feeBalance;
     }
@@ -5133,6 +5172,17 @@ contract SkyOFTAdapter is ISkyOFTAdapter, SkyOFTCore {
         (currentAmountInFlight, amountCanBeReceived) = super.getAmountCanBeReceived(_srcEid);
         (, uint256 sentinelCap) = super.getAmountCanBeReceived(SENTINEL_EID);
         if (sentinelCap < amountCanBeReceived) amountCanBeReceived = sentinelCap;
+    }
+
+    /**
+     * @notice Sets the accounting type for the reserved aggregate eid.
+     * @param _aggregateRateLimitAccountingType The new aggregate-slot accounting type.
+     * @dev You may want to call `resetRateLimits` for `SENTINEL_EID` after changing this.
+     */
+    function setAggregateRateLimitAccountingType(
+        RateLimitAccountingType _aggregateRateLimitAccountingType
+    ) external onlyOwner {
+        _setAggregateRateLimitAccountingType(_aggregateRateLimitAccountingType);
     }
 
     /**

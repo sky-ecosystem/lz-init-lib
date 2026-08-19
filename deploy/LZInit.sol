@@ -263,7 +263,8 @@ library LZInit {
     /// @notice Activate an OFT adapter owned by governance (PAUSE_PROXY on L1, L2GovernanceRelay
     ///         on L2): verify its on-chain config, then set non-zero per-eid rate limits.
     /// @dev    Also usable on L2 via LZL2Spell + relayToL2. For an L1 lockbox's global
-    ///         (SENTINEL_EID) cap, follow with `updateGlobalRateLimits`.
+    ///         (SENTINEL_EID) cap, follow with `updateGlobalRateLimits`, and sanity check the
+    ///         lockbox's separate `aggregateRateLimitAccountingType` alongside it.
     function activateOft(
         address           oft,
         uint32            remoteEid,
