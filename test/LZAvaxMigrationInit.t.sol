@@ -105,7 +105,9 @@ contract LZAvaxMigrationInitTest is Test {
     OftActivation avaxSusds;
     // New L1 lockboxes (owned by the pause proxy) + their configs for migrateAvax.
     address   newUsdsOft;
+    address   newUsdsOftImp;
     address   newSusdsOft;
+    address   newSusdsOftImp;
     OftConfig usdsLockboxCfg;
     OftConfig susdsLockboxCfg;
     // The recv ULN the migration installs on the gov receiver (built in setUp; differs from the live set).
@@ -137,8 +139,8 @@ contract LZAvaxMigrationInitTest is Test {
         // L1 and L2 OFT sides use the same 4/4 required DVN set (per chain).
         l2Spell   = new LZAvaxMigrationL2Spell();
         newRelay  = address(new L2GovernanceRelay(ETH_EID, AVAX_GOV_RECEIVER, GOV_RELAY, 1 days, 7 days, new address[](0)));
-        address avaxUsdsOft  = _deployOftProxy(false, AVAX_USDS);
-        address avaxSusdsOft = _deployOftProxy(false, AVAX_SUSDS);
+        (address avaxUsdsOft,  address avaxUsdsOftImp)  = _deployOftProxy(false, AVAX_USDS);
+        (address avaxSusdsOft, address avaxSusdsOftImp) = _deployOftProxy(false, AVAX_SUSDS);
         // Target recv config: the live LZ-aligned wing + 4 CCIP + 4 multisig replica placeholders, 8-of-15.
         newRecvUln = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
         for (uint160 i; i < 8; ++i) newRecvUln.optionalDVNs.push(address(type(uint160).max - 8 + i));
@@ -146,8 +148,8 @@ contract LZAvaxMigrationInitTest is Test {
         newRecvUln.optionalDVNThreshold = 8;
 
         mainnet.selectFork();
-        newUsdsOft  = _deployOftProxy(true, USDS);
-        newSusdsOft = _deployOftProxy(true, chainlog.getAddress("SUSDS"));
+        (newUsdsOft,  newUsdsOftImp)  = _deployOftProxy(true, USDS);
+        (newSusdsOft, newSusdsOftImp) = _deployOftProxy(true, chainlog.getAddress("SUSDS"));
         // L1 lockboxes: wired for the Avalanche route to their remote adapter, owned by the pause proxy.
         // Libs/executor copied from each token's old L1 adapter; DVNs are the 4/4 Ethereum set.
         usdsLockboxCfg  = _wireOft(newUsdsOft,  AVAX_EID, OLD_L1_USDS_OFT,  _ethOftDvns(), avaxUsdsOft,  PAUSE_PROXY);
@@ -159,12 +161,14 @@ contract LZAvaxMigrationInitTest is Test {
         bridge.destination.selectFork();
         avaxUsds = OftActivation({
             oft: avaxUsdsOft,
+            oftImp: avaxUsdsOftImp,
             cfg: _wireOft(avaxUsdsOft, ETH_EID, OLD_AVAX_USDS_OFT, _avaxOftDvns(), newUsdsOft, OLD_AVAX_GOV_RELAY),
             rateLimits: RateLimits({inboundWindow: 1 hours, inboundLimit: 5_000_000e18, outboundWindow: 2 hours, outboundLimit: 4_000_000e18}),
             rlAccountingType: 0
         });
         avaxSusds = OftActivation({
             oft: avaxSusdsOft,
+            oftImp: avaxSusdsOftImp,
             cfg: _wireOft(avaxSusdsOft, ETH_EID, OLD_AVAX_SUSDS_OFT, _avaxOftDvns(), newSusdsOft, OLD_AVAX_GOV_RELAY),
             rateLimits: RateLimits({inboundWindow: 3 hours, inboundLimit: 3_000_000e18, outboundWindow: 4 hours, outboundLimit: 2_000_000e18}),
             rlAccountingType: 0
@@ -182,8 +186,8 @@ contract LZAvaxMigrationInitTest is Test {
 
     // Deploy a SkyOFT adapter proxy (lockbox on L1, mint/burn on L2), initialized with the test as
     // owner + delegate so it can be wired. Unwired until _wireOft (peers need the counterpart deployed).
-    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft) {
-        address impl = lockbox
+    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft, address impl) {
+        impl = lockbox
             ? address(new SkyOFTAdapter(token_, ENDPOINT))
             : address(new SkyOFTAdapterMintBurn(token_, ENDPOINT));
         oft = address(new ERC1967Proxy(impl, abi.encodeWithSignature("initialize(address)", address(this))));
@@ -303,11 +307,11 @@ contract LZAvaxMigrationInitTest is Test {
         m.ccipRemoteAdapter = makeAddr("avaxCcipAdapter");      // matches the configured route
         m.ccipBroadcaster   = makeAddr("avaxCcipBroadcaster");  // matches the configured route
         m.ccipGas           = 200_000;                          // matches the configured route
-        m.usds              = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.usds              = OftActivation({oft: newUsdsOft,  oftImp: newUsdsOftImp,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits  = _zeroRL();
         m.usdsGlobalRlType  = 0;
         m.legacyCLKey       = "USDS_OFT_SOLANA";
-        m.susds             = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.susds             = OftActivation({oft: newSusdsOft, oftImp: newSusdsOftImp, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
         m.susdsGlobalRlType = 0;
         m.recvUlnCfg        = newRecvUln;
@@ -379,6 +383,7 @@ contract LZAvaxMigrationInitTest is Test {
 
         // USDS swap: chainlog repointed, old adapter kept under the Solana key.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
+        assertEq(chainlog.getAddress("USDS_OFT_IMP"),    newUsdsOftImp);
         assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), OLD_L1_USDS_OFT);
 
         // sUSDS swap: new lockbox activated with its per-eid + global rate limits.
@@ -387,6 +392,7 @@ contract LZAvaxMigrationInitTest is Test {
 
         // sUSDS swap: chainlog repointed; old adapter's Avalanche route left intact (not severed, unlike USDS).
         assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
+        assertEq(chainlog.getAddress("SUSDS_OFT_IMP"),   newSusdsOftImp);
         assertEq(OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID), oldSusdsPeerBefore);
 
         // Gov bridge: new send DVN set installed + relay whitelist swapped (old -> new relay).

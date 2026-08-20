@@ -53,6 +53,7 @@ interface LZAvaxMigrationL2SpellLike {
 
 struct OftActivation {
     address    oft;
+    address    oftImp;
     OftConfig  cfg;
     RateLimits rateLimits;
     uint8      rlAccountingType;
@@ -173,7 +174,7 @@ library LZAvaxMigrationInit {
         address usds = chainlog.getAddress("USDS");
 
         require(LockboxOftLike(m.usds.oft).aggregateRateLimitAccountingType() == m.usdsGlobalRlType, "LZAvaxMigrationInit/usds-global-rl-type-mismatch");
-        LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, ENDPOINT);
+        LZInit.activateOft(m.usds.oft, m.usds.oftImp, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
 
@@ -190,8 +191,9 @@ library LZAvaxMigrationInit {
         OFTAdapterLike(OLD_L1_USDS_OFT).setPeer(AVAX_EID, bytes32(0));
         LZInit.updateRateLimits(OLD_L1_USDS_OFT, AVAX_EID, RateLimits(0, 0, 0, 0));
 
-        chainlog.setAddress("USDS_OFT",    m.usds.oft);
-        chainlog.setAddress(m.legacyCLKey, OLD_L1_USDS_OFT);
+        chainlog.setAddress("USDS_OFT",     m.usds.oft);
+        chainlog.setAddress("USDS_OFT_IMP", m.usds.oftImp);
+        chainlog.setAddress(m.legacyCLKey,  OLD_L1_USDS_OFT);
         }
 
         // ============================ sUSDS OFT V2 swap ===========================
@@ -200,11 +202,12 @@ library LZAvaxMigrationInit {
         // set and its rate limits are already 0 on-chain.
 
         require(LockboxOftLike(m.susds.oft).aggregateRateLimitAccountingType() == m.susdsGlobalRlType, "LZAvaxMigrationInit/susds-global-rl-type-mismatch");
-        LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, ENDPOINT);
+        LZInit.activateOft(m.susds.oft, m.susds.oftImp, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);
 
-        chainlog.setAddress("SUSDS_OFT", m.susds.oft);
+        chainlog.setAddress("SUSDS_OFT",     m.susds.oft);
+        chainlog.setAddress("SUSDS_OFT_IMP", m.susds.oftImp);
 
         // ==========================================================================
         // Gov bridge: update the L1 send DVN set, then swap the gov-relay whitelist.
@@ -253,8 +256,8 @@ library LZAvaxMigrationInit {
         OftActivation memory avaxSusds
     ) internal {
         // Activate the new remote OFTs for the Ethereum route.
-        LZInit.activateOft(avaxUsds.oft,  ETH_EID, avaxUsds.cfg,  avaxUsds.rateLimits,  avaxUsds.rlAccountingType,  AVAX_USDS,  address(this), ENDPOINT);
-        LZInit.activateOft(avaxSusds.oft, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this), ENDPOINT);
+        LZInit.activateOft(avaxUsds.oft, avaxUsds.oftImp, ETH_EID, avaxUsds.cfg, avaxUsds.rateLimits, avaxUsds.rlAccountingType, AVAX_USDS, address(this), ENDPOINT);
+        LZInit.activateOft(avaxSusds.oft, avaxSusds.oftImp, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this), ENDPOINT);
 
         // Gov receiver: new receive DVN set (lib read from the endpoint).
         (address recvLib,) = EndpointLike(OAppLike(AVAX_GOV_RECEIVER).endpoint()).getReceiveLibrary(AVAX_GOV_RECEIVER, ETH_EID);

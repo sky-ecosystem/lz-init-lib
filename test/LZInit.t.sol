@@ -335,6 +335,7 @@ contract LZInitTest is Test {
     // External helper for vm.expectRevert (LZInit functions are internal/inlined)
     function callActivateOft(
         address           oft,
+        address           oftImp,
         uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
@@ -342,15 +343,19 @@ contract LZInitTest is Test {
         address           token,
         address           owner
     ) external {
-        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, ENDPOINT);
+        LZInit.activateOft(oft, oftImp, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, ENDPOINT);
     }
 
-    function _loadExpectedConfig(address oft, uint32 remoteEid) internal view returns (
+    /// @dev The live adapters are the non-upgradeable V1 generation, so `getImplementation` is mocked.
+    function _loadExpectedConfig(address oft, uint32 remoteEid) internal returns (
         OftConfig memory cfg,
         uint8            rlAccountingType,
+        address          oftImp,
         address          token,
         address          owner
     ) {
+        oftImp = makeAddr("oftImp");
+        vm.mockCall(oft, abi.encodeWithSignature("getImplementation()"), abi.encode(oftImp));
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
         EndpointLike   ep   = EndpointLike(oft_.endpoint());
         cfg.peer       = address(uint160(uint256(oft_.peers(remoteEid))));
@@ -376,169 +381,174 @@ contract LZInitTest is Test {
 
         OftConfig memory cfg;
         uint8   rlAt;
+        address imp;
         address token;
         address owner;
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        vm.expectRevert("LZInit/oft-imp-mismatch");
+        this.callActivateOft(SUSDS_OFT, address(0xdead), AVAX_EID, cfg, rl, rlAt, token, owner);
+
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.peer = address(0xdead);
         vm.expectRevert("LZInit/peer-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("paused()"), abi.encode(true));
         vm.expectRevert("LZInit/paused");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.expectRevert("LZInit/rl-accounting-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, 99, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, 99, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.expectRevert("LZInit/token-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, address(0xdead), owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, address(0xdead), owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.expectRevert("LZInit/owner-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, address(0xdead));
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, address(0xdead));
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(ENDPOINT, abi.encodeWithSignature("delegates(address)", SUSDS_OFT), abi.encode(address(0xdead)));
         vm.expectRevert("LZInit/delegate-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("msgInspector()"), abi.encode(address(0xdead)));
         vm.expectRevert("LZInit/msg-inspector-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("defaultFeeBps()"), abi.encode(uint16(1)));
         vm.expectRevert("LZInit/default-fee-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("feeBps(uint32)", AVAX_EID), abi.encode(uint16(1), false));
         vm.expectRevert("LZInit/fee-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("feeBps(uint32)", AVAX_EID), abi.encode(uint16(0), true));
         vm.expectRevert("LZInit/fee-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("outboundRateLimits(uint32)", AVAX_EID), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
         vm.expectRevert("LZInit/outbound-rl-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("inboundRateLimits(uint32)", AVAX_EID), abi.encode(uint128(0), uint48(1 days), uint256(0), uint256(1e18)));
         vm.expectRevert("LZInit/inbound-rl-nonzero");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.sendLib = address(0xdead);
         vm.expectRevert("LZInit/send-lib-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(ENDPOINT, abi.encodeWithSignature("isDefaultSendLibrary(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(true));
         vm.expectRevert("LZInit/send-lib-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.recvLib = address(0xdead);
         vm.expectRevert("LZInit/recv-lib-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(ENDPOINT, abi.encodeWithSignature("getReceiveLibrary(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(cfg.recvLib, true));
         vm.expectRevert("LZInit/recv-lib-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(ENDPOINT, abi.encodeWithSignature("receiveLibraryTimeout(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(address(0xdead), uint256(block.number + 100)));
         vm.expectRevert("LZInit/recv-lib-timeout-active");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.execCfg.maxMessageSize += 1;
         vm.expectRevert("LZInit/exec-cfg-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.sendUlnCfg.confirmations += 1;
         vm.expectRevert("LZInit/send-uln-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.sendUlnCfg.confirmations = 0;
         vm.mockCall(SEND_LIB, abi.encodeWithSignature("getAppUlnConfig(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(cfg.sendUlnCfg));
         vm.expectRevert("LZInit/send-uln-conf-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.sendUlnCfg.requiredDVNCount = 0;
         vm.mockCall(SEND_LIB, abi.encodeWithSignature("getAppUlnConfig(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(cfg.sendUlnCfg));
         vm.expectRevert("LZInit/send-uln-req-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.recvUlnCfg.confirmations += 1;
         vm.expectRevert("LZInit/recv-uln-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.recvUlnCfg.confirmations = 0;
         vm.mockCall(RECV_LIB, abi.encodeWithSignature("getAppUlnConfig(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(cfg.recvUlnCfg));
         vm.expectRevert("LZInit/recv-uln-conf-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.recvUlnCfg.requiredDVNCount = 0;
         vm.mockCall(RECV_LIB, abi.encodeWithSignature("getAppUlnConfig(address,uint32)", SUSDS_OFT, AVAX_EID), abi.encode(cfg.recvUlnCfg));
         vm.expectRevert("LZInit/recv-uln-req-default");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         cfg.optionsGas += 1;
         vm.expectRevert("LZInit/enforced-send-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
 
         // Mock only MSG_TYPE_SEND_AND_CALL (=2) to a bad value so MSG_TYPE_SEND (=1) still matches.
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("enforcedOptions(uint32,uint16)", AVAX_EID, uint16(2)), abi.encode(bytes("bad")));
         vm.expectRevert("LZInit/enforced-send-and-call-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
         vm.mockCall(SUSDS_OFT, abi.encodeWithSignature("endpoint()"), abi.encode(address(0xdead)));
         vm.expectRevert("LZInit/endpoint-mismatch");
-        this.callActivateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner);
+        this.callActivateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner);
         vm.clearMockedCalls();
 
         // --- Happy path ---
 
-        (cfg, rlAt, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
+        (cfg, rlAt, imp, token, owner) = _loadExpectedConfig(SUSDS_OFT, AVAX_EID);
 
         vm.startPrank(PAUSE_PROXY);
-        LZInit.activateOft(SUSDS_OFT, AVAX_EID, cfg, rl, rlAt, token, owner, ENDPOINT);
+        LZInit.activateOft(SUSDS_OFT, imp, AVAX_EID, cfg, rl, rlAt, token, owner, ENDPOINT);
         vm.stopPrank();
 
         (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(SUSDS_OFT).inboundRateLimits(AVAX_EID);

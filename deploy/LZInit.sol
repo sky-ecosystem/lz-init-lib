@@ -132,9 +132,10 @@ interface OFTAdapterLike is OAppLike {
     function setEnforcedOptions(EnforcedOptionParam[] calldata opts) external;
     function unpause() external;
     function owner() external view returns (address);
-    function SENTINEL_EID() external view returns (uint32);
+    function getImplementation() external view returns (address);
     function token() external view returns (address);
     function paused() external view returns (bool);
+    function SENTINEL_EID() external view returns (uint32);
     function outboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function inboundRateLimits(uint32 eid) external view returns (uint128, uint48, uint256, uint256);
     function rateLimitAccountingType() external view returns (uint8);
@@ -267,6 +268,7 @@ library LZInit {
     ///         lockbox's separate `aggregateRateLimitAccountingType` alongside it.
     function activateOft(
         address           oft,
+        address           oftImp,
         uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
@@ -275,7 +277,7 @@ library LZInit {
         address           owner,
         address           endpoint
     ) internal {
-        _verifyOftConfig(oft, remoteEid, cfg, rlAccountingType, token, owner, endpoint);
+        _verifyOftConfig(oft, oftImp, remoteEid, cfg, rlAccountingType, token, owner, endpoint);
         updateRateLimits(oft, remoteEid, rateLimits);
     }
 
@@ -440,6 +442,7 @@ library LZInit {
 
     function _verifyOftConfig(
         address          oft,
+        address          oftImp,
         uint32           remoteEid,
         OftConfig memory cfg,
         uint8            rlAccountingType,
@@ -448,7 +451,8 @@ library LZInit {
         address          endpoint
     ) private view {
         OFTAdapterLike oft_ = OFTAdapterLike(oft);
-        require(oft_.endpoint() == endpoint, "LZInit/endpoint-mismatch");
+        require(oft_.getImplementation() == oftImp,   "LZInit/oft-imp-mismatch");
+        require(oft_.endpoint()          == endpoint, "LZInit/endpoint-mismatch");
         EndpointLike ep = EndpointLike(endpoint);
 
         require(oft_.peers(remoteEid)          == bytes32(uint256(uint160(cfg.peer))), "LZInit/peer-mismatch");
@@ -484,15 +488,19 @@ library LZInit {
 
         // Note: `optionalDVNCount`/`optionalDVNThreshold` are not asserted non-zero (historical Sky
         // adapters were deployed with these at 0). Spell authors should sanity-check them explicitly if needed.
+        {
         UlnConfig memory sendUln = UlnLike(cfg.sendLib).getAppUlnConfig(oft, remoteEid);
         require(keccak256(abi.encode(sendUln)) == keccak256(abi.encode(cfg.sendUlnCfg)), "LZInit/send-uln-mismatch");
         require(sendUln.confirmations    != 0, "LZInit/send-uln-conf-default");
         require(sendUln.requiredDVNCount != 0, "LZInit/send-uln-req-default");
+        }
 
+        {
         UlnConfig memory recvUln = UlnLike(cfg.recvLib).getAppUlnConfig(oft, remoteEid);
         require(keccak256(abi.encode(recvUln)) == keccak256(abi.encode(cfg.recvUlnCfg)), "LZInit/recv-uln-mismatch");
         require(recvUln.confirmations    != 0, "LZInit/recv-uln-conf-default");
         require(recvUln.requiredDVNCount != 0, "LZInit/recv-uln-req-default");
+        }
 
         bytes memory expectedOptions = _encodeLzReceiveOptions(cfg.optionsGas);
         require(keccak256(oft_.enforcedOptions(remoteEid, MSG_TYPE_SEND))          == keccak256(expectedOptions), "LZInit/enforced-send-mismatch");
