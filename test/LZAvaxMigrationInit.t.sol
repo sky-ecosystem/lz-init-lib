@@ -77,7 +77,7 @@ contract LZAvaxMigrationInitTest is Test {
     address constant AVAX_DVN_NETHERMIND = 0xa59BA433ac34D2927232918Ef5B2eaAfcF130BA5;
     address constant AVAX_DVN_CANARY     = 0xcC49E6fca014c77E1Eb604351cc1E08C84511760;
 
-    uint128 constant OPTIONS_GAS   = 129488;          // matches the live adapters' enforced lzReceive gas (0x1fbd0)
+    uint128 constant OPTIONS_GAS   = 130_000;         // matches the live adapters' enforced lzReceive gas (0x1fbd0)
     uint8   constant NIL_DVN_COUNT = type(uint8).max; // explicit "no DVNs" (0 would mean "inherit MessageLib default")
     uint64  constant AVAX_CCIP_SELECTOR = 6433500567565415381; // Chainlink CCIP chain selector for Avalanche C-Chain
 

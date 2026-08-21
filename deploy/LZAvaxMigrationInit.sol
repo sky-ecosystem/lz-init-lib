@@ -222,7 +222,7 @@ library LZAvaxMigrationInit {
     /// @notice Entry point for using the library in linked form: deploy it and link the spell against
     ///         its address rather than embedding it. Spells that embed the library call migrateAvax
     ///         directly. See README "Deployment model: embedded (default) or linked".
-    function migrateAvaxLinked(AvaxMigration memory m) public {
+    function migrateAvaxLinked(AvaxMigration memory m) external {
         migrateAvax(m);
     }
 
