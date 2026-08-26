@@ -20,6 +20,7 @@ contract LZL2Spell {
 
     function activateOft(
         address           oft,
+        address           oftImp,
         uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
@@ -28,7 +29,7 @@ contract LZL2Spell {
         address           owner,
         address           endpoint
     ) external {
-        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, endpoint);
+        LZInit.activateOft(oft, oftImp, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, endpoint);
     }
 
     function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) external {

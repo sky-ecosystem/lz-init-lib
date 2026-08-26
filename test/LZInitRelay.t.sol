@@ -157,6 +157,9 @@ contract LZInitRelayTest is Test {
         cfg.optionsGas = 130_000;
 
         uint8   rlAt  = OFTAdapterLike(avaxSusdsOft).rateLimitAccountingType();
+        // Live V1 adapter: not a proxy, so `getImplementation` is mocked.
+        address imp   = makeAddr("oftImp");
+        vm.mockCall(avaxSusdsOft, abi.encodeWithSignature("getImplementation()"), abi.encode(imp));
         address token = OFTAdapterLike(avaxSusdsOft).token();
         address owner = OFTAdapterLike(avaxSusdsOft).owner();
 
@@ -169,7 +172,7 @@ contract LZInitRelayTest is Test {
 
         _relaySpell(abi.encodeCall(
             LZL2Spell.activateOft,
-            (avaxSusdsOft, ETH_EID, cfg, rl, rlAt, token, owner, AVAX_ENDPOINT)
+            (avaxSusdsOft, imp, ETH_EID, cfg, rl, rlAt, token, owner, AVAX_ENDPOINT)
         ));
 
         (, uint48 ibWindow,, uint256 ibLimit) = OFTAdapterLike(avaxSusdsOft).inboundRateLimits(ETH_EID);
