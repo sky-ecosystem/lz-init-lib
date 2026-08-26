@@ -27,6 +27,7 @@ interface OAppLike {
 
 interface LockboxOftLike {
     function migrateLockedTokens(address to) external;
+    function aggregateRateLimitAccountingType() external view returns (uint8);
 }
 
 interface ChainlogLike {
@@ -37,6 +38,8 @@ interface ChainlogLike {
 interface CCIPDVNAdapterLike {
     function hasRole(bytes32 role, address account) external view returns (bool);
     function allowlistSize() external view returns (uint64);
+    function dstConfig(uint32 eid) external view returns (uint64, uint16, bytes memory, uint256);
+    function receiveLibs(address sendLib, uint32 dstEid) external view returns (bytes32);
 }
 
 interface LZAvaxMigrationL2SpellLike {
@@ -50,6 +53,7 @@ interface LZAvaxMigrationL2SpellLike {
 
 struct OftActivation {
     address    oft;
+    address    oftImp;
     OftConfig  cfg;
     RateLimits rateLimits;
     uint8      rlAccountingType;
@@ -60,11 +64,16 @@ struct AvaxMigration {
     address       newL2GovRelay;      // new L2GovernanceRelay
     uint256       ccipDvnIndex;       // CCIP DVN adapter's index in sendUlnCfg.optionalDVNs
     uint64        ccipAllowlistSize;  // expected CCIP DVN adapter allowlist size
+    address       ccipRemoteAdapter;  // expected remote CCIP adapter (dstConfig peer)
+    address       ccipBroadcaster;    // expected remote CCIP broadcaster (receiveLibs route)
+    uint256       ccipGas;            // expected CCIP dest-chain exec gas (dstConfig gas)
     OftActivation usds;               // L1 USDS OFT and its initial config
     RateLimits    usdsGlobalLimits;   // L1 USDS OFT global cap
+    uint8         usdsGlobalRlType;   // L1 USDS OFT global cap accounting type
     bytes32       legacyCLKey;        // chainlog key to record the legacy (old V1) USDS OFT under
     OftActivation susds;              // L1 sUSDS OFT and its initial config
     RateLimits    susdsGlobalLimits;  // L1 sUSDS OFT global cap
+    uint8         susdsGlobalRlType;  // L1 sUSDS OFT global cap accounting type
     UlnConfig     recvUlnCfg;         // gov receiver: new receive DVN set
     OftActivation avaxUsds;           // Avalanche USDS remote OFT and its initial config
     OftActivation avaxSusds;          // Avalanche sUSDS remote OFT and its initial config
@@ -81,6 +90,7 @@ library LZAvaxMigrationInit {
 
     uint32  internal constant AVAX_EID            = 30106; // Avalanche LayerZero EID
     uint32  internal constant ETH_EID             = 30101; // Ethereum LayerZero EID
+    address internal constant ENDPOINT            = 0x1a44076050125825900e736c501f859c50fE728c; // LZ EndpointV2 (same on Eth + Avax)
     uint8   internal constant MIN_DVN_OVERLAP     = 4;     // min DVNs the new optional set must keep from the current 4/7
     address internal constant OLD_AVAX_GOV_RELAY  = 0xe928885BCe799Ed933651715608155F01abA23cA; // current Avalanche L2GovernanceRelay
     address internal constant AVAX_GOV_RECEIVER   = 0x6fdd46947ca6903c8c159d1dF2012Bc7fC5cEeec; // Avalanche GovernanceOAppReceiver
@@ -97,6 +107,9 @@ library LZAvaxMigrationInit {
     bytes32 internal constant DEFAULT_ADMIN_ROLE  = 0x00;
     bytes32 internal constant ALLOWLIST           = keccak256("ALLOWLIST");
     bytes32 internal constant MESSAGE_LIB_ROLE    = keccak256("MESSAGE_LIB_ROLE");
+
+    // Chainlink CCIP chain selector for Avalanche C-Chain (the avax route's dstConfig.chainSelector).
+    uint64  internal constant AVAX_CCIP_SELECTOR  = 6433500567565415381;
 
     ChainlogLike internal constant chainlog = ChainlogLike(address(LZInit.chainlog));
 
@@ -126,10 +139,17 @@ library LZAvaxMigrationInit {
         // SendSideDeployer contract.
         {
         CCIPDVNAdapterLike ccip = CCIPDVNAdapterLike(m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex]);
-        require(ccip.hasRole(MESSAGE_LIB_ROLE,   sendLib),               "LZAvaxMigrationInit/ccip-sendlib-missing-role");
-        require(ccip.hasRole(ALLOWLIST,          govSender),             "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
-        require(ccip.allowlistSize()             == m.ccipAllowlistSize, "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
-        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),                "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+        require(ccip.hasRole(MESSAGE_LIB_ROLE, sendLib),      "LZAvaxMigrationInit/ccip-sendlib-missing-role");
+        require(ccip.hasRole(ALLOWLIST, govSender),           "LZAvaxMigrationInit/ccip-gov-sender-not-allowlisted");
+        require(ccip.allowlistSize() == m.ccipAllowlistSize,  "LZAvaxMigrationInit/ccip-allowlist-size-mismatch");
+        require(ccip.hasRole(DEFAULT_ADMIN_ROLE, pProxy),     "LZAvaxMigrationInit/ccip-admin-not-handed-off");
+
+        // multiplierBps is skipped: wireCCIPDVN range-guarantees it and it only affects fees.
+        (uint64 chainSelector,, bytes memory peer, uint256 dstGas) = ccip.dstConfig(AVAX_EID % 30000);
+        require(chainSelector == AVAX_CCIP_SELECTOR,                                                 "LZAvaxMigrationInit/ccip-chain-selector-mismatch");
+        require(keccak256(peer) == keccak256(abi.encode(m.ccipRemoteAdapter)),                       "LZAvaxMigrationInit/ccip-peer-mismatch");
+        require(dstGas == m.ccipGas,                                                                 "LZAvaxMigrationInit/ccip-gas-mismatch");
+        require(ccip.receiveLibs(sendLib, AVAX_EID) == bytes32(uint256(uint160(m.ccipBroadcaster))), "LZAvaxMigrationInit/ccip-recv-lib-mismatch");
         }
 
         // ============================ Relay L2 spell ============================
@@ -153,7 +173,8 @@ library LZAvaxMigrationInit {
 
         address usds = chainlog.getAddress("USDS");
 
-        LZInit.activateOft(m.usds.oft, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy);
+        require(LockboxOftLike(m.usds.oft).aggregateRateLimitAccountingType() == m.usdsGlobalRlType, "LZAvaxMigrationInit/usds-global-rl-type-mismatch");
+        LZInit.activateOft(m.usds.oft, m.usds.oftImp, AVAX_EID, m.usds.cfg, m.usds.rateLimits, m.usds.rlAccountingType, usds, pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.usds.oft, m.usdsGlobalLimits);
 
@@ -170,8 +191,9 @@ library LZAvaxMigrationInit {
         OFTAdapterLike(OLD_L1_USDS_OFT).setPeer(AVAX_EID, bytes32(0));
         LZInit.updateRateLimits(OLD_L1_USDS_OFT, AVAX_EID, RateLimits(0, 0, 0, 0));
 
-        chainlog.setAddress("USDS_OFT",    m.usds.oft);
-        chainlog.setAddress(m.legacyCLKey, OLD_L1_USDS_OFT);
+        chainlog.setAddress("USDS_OFT",     m.usds.oft);
+        chainlog.setAddress("USDS_OFT_IMP", m.usds.oftImp);
+        chainlog.setAddress(m.legacyCLKey,  OLD_L1_USDS_OFT);
         }
 
         // ============================ sUSDS OFT V2 swap ===========================
@@ -179,11 +201,13 @@ library LZAvaxMigrationInit {
         // for Solana, unlike USDS), so no need to sever its Avalanche route here: its peer is left
         // set and its rate limits are already 0 on-chain.
 
-        LZInit.activateOft(m.susds.oft, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy);
+        require(LockboxOftLike(m.susds.oft).aggregateRateLimitAccountingType() == m.susdsGlobalRlType, "LZAvaxMigrationInit/susds-global-rl-type-mismatch");
+        LZInit.activateOft(m.susds.oft, m.susds.oftImp, AVAX_EID, m.susds.cfg, m.susds.rateLimits, m.susds.rlAccountingType, chainlog.getAddress("SUSDS"), pProxy, ENDPOINT);
         // Set the lockbox global cap unconditionally, overwriting any prior value (deployer- or spell-set).
         LZInit.updateGlobalRateLimits(m.susds.oft, m.susdsGlobalLimits);
 
-        chainlog.setAddress("SUSDS_OFT", m.susds.oft);
+        chainlog.setAddress("SUSDS_OFT",     m.susds.oft);
+        chainlog.setAddress("SUSDS_OFT_IMP", m.susds.oftImp);
 
         // ==========================================================================
         // Gov bridge: update the L1 send DVN set, then swap the gov-relay whitelist.
@@ -198,7 +222,7 @@ library LZAvaxMigrationInit {
     /// @notice Entry point for using the library in linked form: deploy it and link the spell against
     ///         its address rather than embedding it. Spells that embed the library call migrateAvax
     ///         directly. See README "Deployment model: embedded (default) or linked".
-    function migrateAvaxLinked(AvaxMigration memory m) public {
+    function migrateAvaxLinked(AvaxMigration memory m) external {
         migrateAvax(m);
     }
 
@@ -232,8 +256,8 @@ library LZAvaxMigrationInit {
         OftActivation memory avaxSusds
     ) internal {
         // Activate the new remote OFTs for the Ethereum route.
-        LZInit.activateOft(avaxUsds.oft,  ETH_EID, avaxUsds.cfg,  avaxUsds.rateLimits,  avaxUsds.rlAccountingType,  AVAX_USDS,  address(this));
-        LZInit.activateOft(avaxSusds.oft, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this));
+        LZInit.activateOft(avaxUsds.oft, avaxUsds.oftImp, ETH_EID, avaxUsds.cfg, avaxUsds.rateLimits, avaxUsds.rlAccountingType, AVAX_USDS, address(this), ENDPOINT);
+        LZInit.activateOft(avaxSusds.oft, avaxSusds.oftImp, ETH_EID, avaxSusds.cfg, avaxSusds.rateLimits, avaxSusds.rlAccountingType, AVAX_SUSDS, address(this), ENDPOINT);
 
         // Gov receiver: new receive DVN set (lib read from the endpoint).
         (address recvLib,) = EndpointLike(OAppLike(AVAX_GOV_RECEIVER).endpoint()).getReceiveLibrary(AVAX_GOV_RECEIVER, ETH_EID);

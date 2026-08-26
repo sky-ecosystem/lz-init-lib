@@ -28,7 +28,7 @@ import { Bridge }                from "xchain-helpers/testing/Bridge.sol";
 import { Domain, DomainHelpers } from "xchain-helpers/testing/Domain.sol";
 import { LZBridgeTesting }       from "xchain-helpers/testing/bridges/LZBridgeTesting.sol";
 
-import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendParam, MessagingFee } from "./mocks/SkyOFTAdaptersFlat.sol";
+import { SkyOFTAdapter, SkyOFTAdapterMintBurn, SkyOFTCore, ERC1967Proxy, SendParam, MessagingFee, RateLimitAccountingType } from "./mocks/SkyOFTAdaptersFlat.sol";
 import { SendSideDeployer, CCIPDVNCfg, CCIPDVNAdapter } from "./mocks/SendSideDeployerFlat.sol";
 import { L2GovernanceRelay } from "./mocks/L2GovernanceRelay.sol";
 
@@ -77,7 +77,7 @@ contract LZAvaxMigrationInitTest is Test {
     address constant AVAX_DVN_NETHERMIND = 0xa59BA433ac34D2927232918Ef5B2eaAfcF130BA5;
     address constant AVAX_DVN_CANARY     = 0xcC49E6fca014c77E1Eb604351cc1E08C84511760;
 
-    uint128 constant OPTIONS_GAS   = 129488;          // matches the live adapters' enforced lzReceive gas (0x1fbd0)
+    uint128 constant OPTIONS_GAS   = 130_000;         // matches the live adapters' enforced lzReceive gas (0x1fbd0)
     uint8   constant NIL_DVN_COUNT = type(uint8).max; // explicit "no DVNs" (0 would mean "inherit MessageLib default")
     uint64  constant AVAX_CCIP_SELECTOR = 6433500567565415381; // Chainlink CCIP chain selector for Avalanche C-Chain
 
@@ -105,7 +105,9 @@ contract LZAvaxMigrationInitTest is Test {
     OftActivation avaxSusds;
     // New L1 lockboxes (owned by the pause proxy) + their configs for migrateAvax.
     address   newUsdsOft;
+    address   newUsdsOftImp;
     address   newSusdsOft;
+    address   newSusdsOftImp;
     OftConfig usdsLockboxCfg;
     OftConfig susdsLockboxCfg;
     // The recv ULN the migration installs on the gov receiver (built in setUp; differs from the live set).
@@ -137,8 +139,8 @@ contract LZAvaxMigrationInitTest is Test {
         // L1 and L2 OFT sides use the same 4/4 required DVN set (per chain).
         l2Spell   = new LZAvaxMigrationL2Spell();
         newRelay  = address(new L2GovernanceRelay(ETH_EID, AVAX_GOV_RECEIVER, GOV_RELAY, 1 days, 7 days, new address[](0)));
-        address avaxUsdsOft  = _deployOftProxy(false, AVAX_USDS);
-        address avaxSusdsOft = _deployOftProxy(false, AVAX_SUSDS);
+        (address avaxUsdsOft,  address avaxUsdsOftImp)  = _deployOftProxy(false, AVAX_USDS);
+        (address avaxSusdsOft, address avaxSusdsOftImp) = _deployOftProxy(false, AVAX_SUSDS);
         // Target recv config: the live LZ-aligned wing + 4 CCIP + 4 multisig replica placeholders, 8-of-15.
         newRecvUln = _readRecvUln(AVAX_GOV_RECEIVER, ETH_EID);
         for (uint160 i; i < 8; ++i) newRecvUln.optionalDVNs.push(address(type(uint160).max - 8 + i));
@@ -146,8 +148,8 @@ contract LZAvaxMigrationInitTest is Test {
         newRecvUln.optionalDVNThreshold = 8;
 
         mainnet.selectFork();
-        newUsdsOft  = _deployOftProxy(true, USDS);
-        newSusdsOft = _deployOftProxy(true, chainlog.getAddress("SUSDS"));
+        (newUsdsOft,  newUsdsOftImp)  = _deployOftProxy(true, USDS);
+        (newSusdsOft, newSusdsOftImp) = _deployOftProxy(true, chainlog.getAddress("SUSDS"));
         // L1 lockboxes: wired for the Avalanche route to their remote adapter, owned by the pause proxy.
         // Libs/executor copied from each token's old L1 adapter; DVNs are the 4/4 Ethereum set.
         usdsLockboxCfg  = _wireOft(newUsdsOft,  AVAX_EID, OLD_L1_USDS_OFT,  _ethOftDvns(), avaxUsdsOft,  PAUSE_PROXY);
@@ -159,12 +161,14 @@ contract LZAvaxMigrationInitTest is Test {
         bridge.destination.selectFork();
         avaxUsds = OftActivation({
             oft: avaxUsdsOft,
+            oftImp: avaxUsdsOftImp,
             cfg: _wireOft(avaxUsdsOft, ETH_EID, OLD_AVAX_USDS_OFT, _avaxOftDvns(), newUsdsOft, OLD_AVAX_GOV_RELAY),
             rateLimits: RateLimits({inboundWindow: 1 hours, inboundLimit: 5_000_000e18, outboundWindow: 2 hours, outboundLimit: 4_000_000e18}),
             rlAccountingType: 0
         });
         avaxSusds = OftActivation({
             oft: avaxSusdsOft,
+            oftImp: avaxSusdsOftImp,
             cfg: _wireOft(avaxSusdsOft, ETH_EID, OLD_AVAX_SUSDS_OFT, _avaxOftDvns(), newSusdsOft, OLD_AVAX_GOV_RELAY),
             rateLimits: RateLimits({inboundWindow: 3 hours, inboundLimit: 3_000_000e18, outboundWindow: 4 hours, outboundLimit: 2_000_000e18}),
             rlAccountingType: 0
@@ -182,8 +186,8 @@ contract LZAvaxMigrationInitTest is Test {
 
     // Deploy a SkyOFT adapter proxy (lockbox on L1, mint/burn on L2), initialized with the test as
     // owner + delegate so it can be wired. Unwired until _wireOft (peers need the counterpart deployed).
-    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft) {
-        address impl = lockbox
+    function _deployOftProxy(bool lockbox, address token_) internal returns (address oft, address impl) {
+        impl = lockbox
             ? address(new SkyOFTAdapter(token_, ENDPOINT))
             : address(new SkyOFTAdapterMintBurn(token_, ENDPOINT));
         oft = address(new ERC1967Proxy(impl, abi.encodeWithSignature("initialize(address)", address(this))));
@@ -280,8 +284,8 @@ contract LZAvaxMigrationInitTest is Test {
         address[] memory allow = new address[](1);
         allow[0] = ccipAllowlisted ? GOV_SENDER : makeAddr("decoyOApp");
         SendSideDeployer dep = new SendSideDeployer(depSendLib, allow);
-        // Avalanche routing; the remote CCIP adapter/broadcaster are opaque here (force-delivery skips
-        // CCIP-side verification), they only need to be set.
+        // Avalanche routing; the remote CCIP adapter/broadcaster are opaque (force-delivery skips CCIP-side
+        // verification), set to the same values migrateAvax value-checks against (m.ccip* below).
         dep.configure(CCIPDVNCfg({
             remoteEid:               AVAX_EID,
             remoteCcipChainSelector: AVAX_CCIP_SELECTOR,
@@ -300,11 +304,16 @@ contract LZAvaxMigrationInitTest is Test {
         }
         m.newL2GovRelay     = newRelay;
         m.ccipAllowlistSize = 1;  // SendSideDeployer allowlists exactly the gov sender
-        m.usds              = OftActivation({oft: newUsdsOft,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.ccipRemoteAdapter = makeAddr("avaxCcipAdapter");      // matches the configured route
+        m.ccipBroadcaster   = makeAddr("avaxCcipBroadcaster");  // matches the configured route
+        m.ccipGas           = 200_000;                          // matches the configured route
+        m.usds              = OftActivation({oft: newUsdsOft,  oftImp: newUsdsOftImp,  cfg: usdsLockboxCfg,  rateLimits: _zeroRL(), rlAccountingType: 0});
         m.usdsGlobalLimits  = _zeroRL();
+        m.usdsGlobalRlType  = 0;
         m.legacyCLKey       = "USDS_OFT_SOLANA";
-        m.susds             = OftActivation({oft: newSusdsOft, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
+        m.susds             = OftActivation({oft: newSusdsOft, oftImp: newSusdsOftImp, cfg: susdsLockboxCfg, rateLimits: _zeroRL(), rlAccountingType: 0});
         m.susdsGlobalLimits = _zeroRL();
+        m.susdsGlobalRlType = 0;
         m.recvUlnCfg        = newRecvUln;
         m.avaxUsds          = avaxUsds;
         m.avaxSusds         = avaxSusds;
@@ -374,6 +383,7 @@ contract LZAvaxMigrationInitTest is Test {
 
         // USDS swap: chainlog repointed, old adapter kept under the Solana key.
         assertEq(chainlog.getAddress("USDS_OFT"),        newUsdsOft);
+        assertEq(chainlog.getAddress("USDS_OFT_IMP"),    newUsdsOftImp);
         assertEq(chainlog.getAddress("USDS_OFT_SOLANA"), OLD_L1_USDS_OFT);
 
         // sUSDS swap: new lockbox activated with its per-eid + global rate limits.
@@ -382,6 +392,7 @@ contract LZAvaxMigrationInitTest is Test {
 
         // sUSDS swap: chainlog repointed; old adapter's Avalanche route left intact (not severed, unlike USDS).
         assertEq(chainlog.getAddress("SUSDS_OFT"),       newSusdsOft);
+        assertEq(chainlog.getAddress("SUSDS_OFT_IMP"),   newSusdsOftImp);
         assertEq(OFTAdapterLike(OLD_L1_SUSDS_OFT).peers(AVAX_EID), oldSusdsPeerBefore);
 
         // Gov bridge: new send DVN set installed + relay whitelist swapped (old -> new relay).
@@ -642,6 +653,14 @@ contract LZAvaxMigrationInitTest is Test {
         LZAvaxMigrationInit.migrateAvax(m);
     }
 
+    /// @dev For reverts raised past the relay to Avalanche: the prank has to be set at the same call
+    ///      depth as the library's own calls, so it cannot be applied around `runMigration`.
+    function runMigrationAsGov(AvaxMigration memory m) external {
+        vm.startPrank(PAUSE_PROXY);
+        LZAvaxMigrationInit.migrateAvax(m);
+        vm.stopPrank();
+    }
+
     function test_migrateAvax_revertsIfInsufficientDvnOverlap() public {
         mainnet.selectFork();
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
@@ -728,6 +747,44 @@ contract LZAvaxMigrationInitTest is Test {
         assertEq(chainlog.getAddress("USDS_OFT"), m.usds.oft);  // proof it ran to completion
     }
 
+    function test_migrateAvax_revertsIfCcipChainSelectorMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        address ccip = m.sendUlnCfg.optionalDVNs[m.ccipDvnIndex];
+        // Wrong chainSelector, correct peer/gas so the chain-selector check is the one that fires.
+        vm.mockCall(
+            ccip,
+            abi.encodeWithSignature("dstConfig(uint32)", AVAX_EID % 30000),
+            abi.encode(uint64(1), uint16(0), abi.encode(m.ccipRemoteAdapter), m.ccipGas)
+        );
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-chain-selector-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipPeerMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipRemoteAdapter = makeAddr("wrongAdapter");
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-peer-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipGasMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipGas = 1;
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-gas-mismatch"));
+        this.runMigration(m);
+    }
+
+    function test_migrateAvax_revertsIfCcipReceiveLibMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.ccipBroadcaster = makeAddr("wrongBroadcaster");
+        vm.expectRevert(bytes("LZAvaxMigrationInit/ccip-recv-lib-mismatch"));
+        this.runMigration(m);
+    }
+
     function test_migrateAvax_revertsIfCcipIndexOutOfBounds() public {
         mainnet.selectFork();
         AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
@@ -736,6 +793,46 @@ contract LZAvaxMigrationInitTest is Test {
         m.ccipDvnIndex = m.sendUlnCfg.optionalDVNs.length;
         vm.expectRevert(stdError.indexOOBError);
         this.runMigration(m);
+    }
+
+    // The lockboxes' sentinel buckets are left at the default Net, so claiming Gross must revert.
+    function test_migrateAvax_revertsIfUsdsGlobalRlTypeMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.usdsGlobalRlType = 1;
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert(bytes("LZAvaxMigrationInit/usds-global-rl-type-mismatch"));
+        this.runMigrationAsGov(m);
+    }
+
+    function test_migrateAvax_revertsIfSusdsGlobalRlTypeMismatch() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.susdsGlobalRlType = 1;
+        vm.deal(GOV_RELAY, 1 ether);
+        vm.expectRevert(bytes("LZAvaxMigrationInit/susds-global-rl-type-mismatch"));
+        this.runMigrationAsGov(m);
+    }
+
+    // Gross sentinel buckets are accepted, and only the aggregate slot is read: the per-eid accounting
+    // type stays Net throughout, so reading the wrong one here would revert.
+    function test_migrateAvax_acceptsGrossGlobalRlType() public {
+        mainnet.selectFork();
+        AvaxMigration memory m = _buildMigration({ccipHandedOff: true});
+        m.usdsGlobalLimits  = RateLimits({inboundWindow: 15 hours, inboundLimit: 3_000_000e18, outboundWindow: 16 hours, outboundLimit: 4_000_000e18});
+        m.susdsGlobalLimits = RateLimits({inboundWindow: 19 hours, inboundLimit: 7_000_000e18, outboundWindow: 20 hours, outboundLimit: 8_000_000e18});
+        m.usdsGlobalRlType  = 1;
+        m.susdsGlobalRlType = 1;
+
+        vm.startPrank(PAUSE_PROXY);
+        SkyOFTAdapter(m.usds.oft).setAggregateRateLimitAccountingType(RateLimitAccountingType.Gross);
+        SkyOFTAdapter(m.susds.oft).setAggregateRateLimitAccountingType(RateLimitAccountingType.Gross);
+        vm.deal(GOV_RELAY, 1 ether);
+        LZAvaxMigrationInit.migrateAvax(m);
+        vm.stopPrank();
+
+        _assertRateLimits(m.usds.oft,  OFTAdapterLike(m.usds.oft).SENTINEL_EID(),  m.usdsGlobalLimits);
+        _assertRateLimits(m.susds.oft, OFTAdapterLike(m.susds.oft).SENTINEL_EID(), m.susdsGlobalLimits);
     }
 }
 
