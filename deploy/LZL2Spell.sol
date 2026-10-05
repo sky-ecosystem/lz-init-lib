@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.24;
 
 import { LZInit, OftConfig, RateLimits, UlnConfig } from "./LZInit.sol";
 
@@ -20,14 +20,16 @@ contract LZL2Spell {
 
     function activateOft(
         address           oft,
+        address           oftImp,
         uint32            remoteEid,
         OftConfig  memory cfg,
         RateLimits memory rateLimits,
         uint8             rlAccountingType,
         address           token,
-        address           owner
+        address           owner,
+        address           endpoint
     ) external {
-        LZInit.activateOft(oft, remoteEid, cfg, rateLimits, rlAccountingType, token, owner);
+        LZInit.activateOft(oft, oftImp, remoteEid, cfg, rateLimits, rlAccountingType, token, owner, endpoint);
     }
 
     function updateRateLimits(address oft, uint32 remoteEid, RateLimits memory rateLimits) external {
