@@ -170,3 +170,21 @@ MAINNET_RPC_URL=<mainnet_rpc> AVALANCHE_RPC_URL=<avalanche_rpc> forge test
 ```
 
 Tests fork mainnet and Avalanche at pinned historical blocks, so both RPCs must be archive-capable. `MAINNET_RPC_URL` is required (used internally by `xchain-helpers`); `AVALANCHE_RPC_URL` is optional and falls back to forge-std's default if unset.
+
+## Audits
+
+Audit reports are hosted on the auditors' public portfolio pages:
+
+| Auditor | Report | Date |
+| --- | --- | --- |
+| ChainSecurity | [Sky LZ Init Lib](https://www.chainsecurity.com/security-audit/sky-lz-init-lib/) | 2026-09-07 |
+| Cantina | [Sky: LZ SSR Oracle Init](https://cantina.xyz/portfolio/6047ca8c-9886-4b8b-a220-00d5dc565df9) | 2026-08-23 |
+| Cantina | [Sky: Avalanche LZ Re-enabling](https://cantina.xyz/portfolio/5be5311e-bdf2-4e8b-92c0-33475e555f07) | 2026-08-21 |
+
+ChainSecurity reports are cumulative: each portfolio page hosts the latest version of the report, which covers all previously reviewed versions.
+
+### Other reports
+
+The following reports are not available on an auditor portfolio page and are kept in this repository:
+
+- [Cantina (20260520-report-cli-cantina-sky-lz-init-lib.pdf)](./audit/20260520-report-cli-cantina-sky-lz-init-lib.pdf)
